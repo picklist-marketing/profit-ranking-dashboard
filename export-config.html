@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>設定エクスポート - 粗利ランキング</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.3);
+      max-width: 800px;
+      width: 100%;
+      padding: 40px;
+    }
+    h1 {
+      color: #1f2937;
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #6b7280;
+      margin-bottom: 32px;
+    }
+    .section {
+      margin-bottom: 24px;
+    }
+    .label {
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 8px;
+      display: block;
+    }
+    textarea {
+      width: 100%;
+      min-height: 150px;
+      padding: 12px;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      resize: vertical;
+    }
+    textarea:focus {
+      outline: none;
+      border-color: #3b82f6;
+    }
+    button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 16px rgba(102,126,234,.3);
+    }
+    button:active {
+      transform: translateY(0);
+    }
+    .success {
+      background: #10b981;
+      color: white;
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 12px;
+      display: none;
+    }
+    .error {
+      background: #ef4444;
+      color: white;
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 12px;
+      display: none;
+    }
+    .info-box {
+      background: #eff6ff;
+      border: 2px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 24px;
+    }
+    .info-box h3 {
+      color: #1e40af;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+    .info-box p {
+      color: #1e3a8a;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .info-box code {
+      background: #dbeafe;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📤 設定エクスポート</h1>
+    <p class="subtitle">Vercel環境変数用のJSONを取得します</p>
+
+    <div class="section">
+      <label class="label">MEMBERS_CSV_CONFIG</label>
+      <textarea id="output" readonly placeholder="「エクスポート」ボタンをクリックしてください..."></textarea>
+      <button onclick="exportConfig()">📋 エクスポート</button>
+      <button onclick="copyToClipboard()" style="margin-left: 8px; background: #10b981;">📋 コピー</button>
+      <div id="success" class="success">✅ クリップボードにコピーしました！</div>
+      <div id="error" class="error">❌ エラー: 設定が見つかりません。先にダッシュボードでメンバー設定を行ってください。</div>
+    </div>
+
+    <div class="info-box">
+      <h3>使い方</h3>
+      <p>
+        1. 先に<a href="index.html" style="color: #2563eb;">ダッシュボード</a>でメンバーとスプレッドシートURLを設定してください<br>
+        2. このページで「エクスポート」ボタンをクリック<br>
+        3. 「コピー」ボタンでクリップボードにコピー<br>
+        4. Vercel DashboardのEnvironment Variablesに <code>MEMBERS_CSV_CONFIG</code> として貼り付け
+      </p>
+    </div>
+
+    <div class="info-box" style="margin-top: 16px; background: #fef3c7; border-color: #fde68a;">
+      <h3 style="color: #92400e;">⚠️ その他の環境変数</h3>
+      <p style="color: #78350f;">
+        以下の環境変数も設定が必要です：<br>
+        • <code>CHATWORK_TOKEN=527eb3dcc9d7a8b2f9b3e5373f673236</code><br>
+        • <code>CHATWORK_ROOM_ID=299927922</code><br>
+        • <code>CRON_SECRET=（ランダムな文字列）</code><br><br>
+        詳細は <a href="CHATWORK_SETUP.md" style="color: #92400e; font-weight: 600;">CHATWORK_SETUP.md</a> を参照してください。
+      </p>
+    </div>
+  </div>
+
+  <script>
+    const SK_MEM = "profit-ranking-members-csv";
+
+    function exportConfig() {
+      const data = localStorage.getItem(SK_MEM);
+      const output = document.getElementById('output');
+      const success = document.getElementById('success');
+      const error = document.getElementById('error');
+
+      success.style.display = 'none';
+      error.style.display = 'none';
+
+      if (!data) {
+        error.style.display = 'block';
+        output.value = '';
+        return;
+      }
+
+      try {
+        // Validate JSON
+        JSON.parse(data);
+        output.value = data;
+      } catch (e) {
+        error.textContent = '❌ エラー: 設定データが不正です。';
+        error.style.display = 'block';
+        output.value = '';
+      }
+    }
+
+    function copyToClipboard() {
+      const output = document.getElementById('output');
+      const success = document.getElementById('success');
+      const error = document.getElementById('error');
+
+      if (!output.value) {
+        error.textContent = '❌ エラー: 先にエクスポートしてください。';
+        error.style.display = 'block';
+        return;
+      }
+
+      output.select();
+      document.execCommand('copy');
+
+      success.style.display = 'block';
+      setTimeout(() => {
+        success.style.display = 'none';
+      }, 3000);
+    }
+
+    // Auto export on load
+    window.addEventListener('load', () => {
+      exportConfig();
+    });
+  </script>
+</body>
+</html>

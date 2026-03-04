@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>粗利ランキング Dashboard</title>
+  <title>粗利ランキング</title>
 
   <!-- React & ReactDOM (CDN) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -14,7 +14,15 @@
 
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
+      color: #1f2937;
+    }
+    .card-hover { transition: all 0.2s ease; }
+    .card-hover:hover { transform: translateY(-2px); box-shadow: 0 12px 24px rgba(0,0,0,.08); }
+    .btn-hover { transition: all 0.15s ease; }
+    .btn-hover:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(37,99,235,.25); }
   </style>
 </head>
 <body>
@@ -23,9 +31,8 @@
   <script type="text/babel">
     const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
-    const PAL = ["#F59E0B","#3B82F6","#10B981","#A855F7","#EC4899","#06B6D4","#EF4444","#F97316"];
-    const SK_URL = "profit-ranking-gas-url";
-    const SK_MEM = "profit-ranking-members-v3"; // v3に変更
+    const COLORS = ["#2563eb","#dc2626","#059669","#7c3aed","#db2777","#0891b2","#ea580c","#65a30d"];
+    const SK_MEM = "profit-ranking-members-csv";
     const SK_INT = "profit-ranking-interval";
 
     const DEFAULT_MEMBERS = [
@@ -46,62 +53,177 @@
     function getCurrentMonth(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;}
     function formatMonth(ym){const[y,m]=ym.split('-');return`${y}年${m}月`;}
 
-    /* ═══ JSONP fetch — bypasses CORS completely ═══ */
-    function jsonpFetch(url, params = {}) {
-      return new Promise((resolve, reject) => {
-        const cbName = "_jp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
-        const timeout = setTimeout(() => {
-          cleanup();
-          reject(new Error("リクエストがタイムアウトしました（30秒）"));
-        }, 30000);
+    /* ═══ CSV Parser ═══ */
+    function parseCSV(text) {
+      const lines = [];
+      let current = [];
+      let inQuotes = false;
+      let cell = '';
 
-        function cleanup() {
-          clearTimeout(timeout);
-          delete window[cbName];
-          const el = document.getElementById(cbName);
-          if (el) el.remove();
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        const next = text[i + 1];
+
+        if (char === '"') {
+          if (inQuotes && next === '"') {
+            cell += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (char === ',' && !inQuotes) {
+          current.push(cell);
+          cell = '';
+        } else if ((char === '\n' || char === '\r') && !inQuotes) {
+          if (char === '\r' && next === '\n') i++;
+          current.push(cell);
+          if (current.length > 0) lines.push(current);
+          current = [];
+          cell = '';
+        } else {
+          cell += char;
         }
+      }
 
-        window[cbName] = (data) => {
-          cleanup();
-          resolve(data);
-        };
+      if (cell || current.length > 0) {
+        current.push(cell);
+        lines.push(current);
+      }
 
-        const qs = Object.entries({ ...params, callback: cbName })
-          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
-          .join("&");
-        const sep = url.includes("?") ? "&" : "?";
-        const script = document.createElement("script");
-        script.id = cbName;
-        script.src = `${url}${sep}${qs}`;
-        script.onerror = () => {
-          cleanup();
-          reject(new Error("スクリプト読み込みエラー。GAS URLを確認してください。"));
-        };
-        document.head.appendChild(script);
-      });
+      return lines;
     }
 
-    /* ═══ Tooltip ═══ */
-    const CTip=({active,payload,label})=>{
-      if(!active||!payload?.length)return null;
-      return(<div style={{background:"rgba(10,18,32,.97)",border:"1px solid rgba(255,255,255,.08)",borderRadius:10,padding:"10px 14px",fontSize:12,boxShadow:"0 8px 32px rgba(0,0,0,.45)"}}>
-        <p style={{color:"#64748B",margin:"0 0 4px",fontWeight:500}}>{label}</p>
-        {payload.map((p,i)=><p key={i} style={{color:p.color||"#F59E0B",fontWeight:600,margin:"2px 0"}}>{p.name}: {fF(p.value)}</p>)}
-      </div>);
-    };
+    /* ═══ 合算シートパーサー ═══ */
+    function parseSheetData(csvText, memberName) {
+      try {
+        const data = parseCSV(csvText);
+
+        if (data.length < 3) {
+          return { name: memberName, error: "データが不足しています", projects: [] };
+        }
+
+        // 日付ヘッダー行を見つける（最初の12行を探索）
+        let dateRowIdx = -1;
+        let dateMap = {};
+
+        for (let i = 0; i < Math.min(data.length, 12); i++) {
+          const hits = {};
+          data[i].forEach((cell, ci) => {
+            const s = String(cell || "").trim();
+            if (/^\d{1,2}\/\d{1,2}$/.test(s)) {
+              hits[ci] = s;
+            }
+          });
+          if (Object.keys(hits).length >= 5) {
+            dateRowIdx = i;
+            dateMap = hits;
+            break;
+          }
+        }
+
+        if (dateRowIdx < 0) {
+          const preview = data.slice(0, 5).map(row => row.slice(0, 10).join(', ')).join('\n');
+          return {
+            name: memberName,
+            error: `日付ヘッダーが見つかりません。CSV公開で「合算シート」「CSV形式」を選択したか確認してください。`,
+            projects: []
+          };
+        }
+
+        // 合計列を見つける
+        let totalCol = -1;
+        data[dateRowIdx].forEach((cell, ci) => {
+          if (String(cell || "").trim() === "合計") totalCol = ci;
+        });
+
+        // 粗利行を探してプロジェクトを抽出
+        const projects = [];
+
+        for (let i = dateRowIdx + 1; i < data.length; i++) {
+          const row = data[i];
+          let isProfitRow = false;
+          let profitColIdx = -1;
+
+          row.forEach((cell, ci) => {
+            if (String(cell || "").trim() === "粗利") {
+              isProfitRow = true;
+              profitColIdx = ci;
+            }
+          });
+
+          if (!isProfitRow) continue;
+
+          // プロジェクト名
+          let projName = "";
+          for (let ci = profitColIdx - 1; ci >= 0; ci--) {
+            const val = String(row[ci] || "").trim();
+            if (val && val !== "") { projName = val; break; }
+          }
+
+          // シート名
+          let sheetName = String(row[1] || "").trim();
+          if (!sheetName) {
+            for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
+              const val = String(data[j][1] || "").trim();
+              if (val) { sheetName = val; break; }
+            }
+          }
+
+          if (sheetName === "シート名") continue;
+
+          // プラットフォーム判定
+          let platform = "Other";
+          const sn = (sheetName + projName).toLowerCase();
+          if (sn.includes("tik") || sn.includes("pangle")) platform = "TikTok";
+          else if (sn.includes("meta") || sn.includes("mete")) platform = "Meta";
+          else if (sn.includes("google")) platform = "Google";
+          else if (sn.includes("line") || sn.includes("lap")) platform = "LINE";
+
+          // 日別データ
+          const daily = {};
+          Object.entries(dateMap).forEach(([ci, date]) => {
+            const val = row[parseInt(ci)] || "";
+            const numVal = typeof val === "number" ? val : parseFloat(String(val).replace(/[¥￥,]/g, "")) || 0;
+            daily[date] = numVal;
+          });
+
+          // 合計
+          let total = 0;
+          if (totalCol >= 0) {
+            const val = row[totalCol] || "";
+            total = typeof val === "number" ? val : parseFloat(String(val).replace(/[¥￥,]/g, "")) || 0;
+          } else {
+            total = Object.values(daily).reduce((s, v) => s + v, 0);
+          }
+
+          if (total === 0 && Object.values(daily).every(v => v === 0)) continue;
+
+          const displayName = projName || sheetName || `案件${projects.length + 1}`;
+          projects.push({
+            name: displayName,
+            platform: platform,
+            totalProfit: total,
+            daily: daily,
+            sheetName: sheetName
+          });
+        }
+
+        return { name: memberName, projects: projects };
+
+      } catch (error) {
+        return { name: memberName, error: error.message, projects: [] };
+      }
+    }
 
     /* ═══════════════════════════════════════════════════════════
        MAIN
        ═══════════════════════════════════════════════════════════ */
     function Dashboard(){
-      const [gasUrl, setGasUrl] = useState("");
       const [reg, setReg] = useState(DEFAULT_MEMBERS);
       const [selMonth, setSelMonth] = useState(getCurrentMonth());
       const [members, setMembers] = useState([]);
       const [loading, setLoading] = useState(false);
       const [errors, setErrors] = useState({});
-      const [mSt, setMSt] = useState({});
       const [selDate, setSelDate] = useState("");
       const [view, setView] = useState("ranking");
       const [showAdd, setShowAdd] = useState(false);
@@ -109,40 +231,32 @@
       const [showSettings, setShowSettings] = useState(false);
       const [showSetup, setShowSetup] = useState(false);
       const [addName, setAddName] = useState("");
-      const [addLoading, setAddLoading] = useState(false);
       const [lastUp, setLastUp] = useState(null);
-      const [nextUp, setNextUp] = useState(null);
-      const [cd, setCd] = useState("");
-      const [autoRef, setAutoRef] = useState(true);
+      const [expandedMembers, setExpandedMembers] = useState({});
+      const [autoRef, setAutoRef] = useState(false);
       const [intMin, setIntMin] = useState(5);
       const [initDone, setInitDone] = useState(false);
       const [monthUrls, setMonthUrls] = useState({});
       const [newMonthYM, setNewMonthYM] = useState(getCurrentMonth());
       const iRef = useRef(null);
-      const cRef = useRef(null);
       const regRef = useRef(reg);
-      const gasRef = useRef(gasUrl);
       const intRef = useRef(intMin);
       const selMonthRef = useRef(selMonth);
 
       useEffect(()=>{regRef.current=reg;},[reg]);
-      useEffect(()=>{gasRef.current=gasUrl;},[gasUrl]);
       useEffect(()=>{intRef.current=intMin;},[intMin]);
       useEffect(()=>{selMonthRef.current=selMonth;},[selMonth]);
 
       /* ── Init ─── */
       useEffect(()=>{
         (async()=>{
-          const u=await sG(SK_URL), m=await sG(SK_MEM), v=await sG(SK_INT);
-          if(u) setGasUrl(u);
+          const m=await sG(SK_MEM), v=await sG(SK_INT);
           if(m){try{const p=JSON.parse(m);if(Array.isArray(p)&&p.length)setReg(p);}catch{}}
           if(v){const n=parseInt(v);if(!isNaN(n))setIntMin(n);}
           setInitDone(true);
-          if(!u) setShowSetup(true);
         })();
       },[]);
 
-      /* ── Available months ─── */
       const availableMonths = useMemo(()=>{
         const months = new Set();
         reg.forEach(r=>Object.keys(r.sheets||{}).forEach(m=>months.add(m)));
@@ -155,18 +269,16 @@
         }
       },[availableMonths]);
 
-      /* ── Fetch via JSONP ─── */
+      const hasDataForMonth = availableMonths.length > 0;
+
+      /* ── Fetch CSV data ─── */
       const fetchAll = useCallback(async(monthOv)=>{
-        const url = gasRef.current;
         const month = monthOv || selMonthRef.current;
         const list = regRef.current;
 
-        if(!url){setShowSetup(true);return;}
-
-        // 選択月のシートIDを持つメンバーのみ取得
         const membersToFetch = list
           .filter(r=>r.sheets && r.sheets[month])
-          .map(r=>({name:r.name, sheetId:r.sheets[month]}));
+          .map(r=>({name:r.name, csvUrl:r.sheets[month]}));
 
         if(membersToFetch.length === 0){
           setMembers([]);
@@ -178,51 +290,43 @@
         setErrors({});
 
         try{
-          const json = await jsonpFetch(url, { members: JSON.stringify(membersToFetch) });
+          const results = await Promise.all(
+            membersToFetch.map(async (m) => {
+              try {
+                const response = await fetch(m.csvUrl);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const csvText = await response.text();
+                return parseSheetData(csvText, m.name);
+              } catch (error) {
+                return { name: m.name, error: `取得エラー: ${error.message}`, projects: [] };
+              }
+            })
+          );
 
-          if(!json.success) throw new Error(json.error||"不明なエラー");
-
-          const results=[], errs={};
-          (json.data||[]).forEach(d=>{
+          const okResults = [], errs = {};
+          results.forEach(d=>{
             if(d.error){ errs[d.name]=d.error; }
-            else if(d.projects?.length>0){ results.push(d); }
+            else if(d.projects?.length>0){ okResults.push(d); }
             else { errs[d.name]="データなし"; }
           });
 
-          setMembers(results);
+          setMembers(okResults);
           setErrors(errs);
-          const st={};
-          results.forEach(r=>{st[r.name]="ok";});
-          Object.keys(errs).forEach(n=>{st[n]="error";});
-          setMSt(st);
         }catch(e){
           setErrors({"接続エラー":e.message});
         }
 
         setLoading(false);
         setLastUp(new Date());
-        setNextUp(new Date(Date.now()+intRef.current*60*1000));
       },[]);
 
-      useEffect(()=>{if(initDone&&gasUrl&&selMonth)fetchAll();},[initDone,gasUrl,selMonth]);
+      useEffect(()=>{if(initDone&&hasDataForMonth&&selMonth)fetchAll();},[initDone,hasDataForMonth,selMonth]);
 
       useEffect(()=>{
         if(iRef.current)clearInterval(iRef.current);
-        if(autoRef&&gasUrl&&selMonth){iRef.current=setInterval(()=>fetchAll(),intMin*60*1000);}
+        if(autoRef&&hasDataForMonth&&selMonth){iRef.current=setInterval(()=>fetchAll(),intMin*60*1000);}
         return()=>{if(iRef.current)clearInterval(iRef.current);};
-      },[autoRef,intMin,gasUrl,selMonth,fetchAll]);
-
-      useEffect(()=>{
-        if(cRef.current)clearInterval(cRef.current);
-        if(autoRef&&nextUp){
-          cRef.current=setInterval(()=>{
-            const d=Math.max(0,nextUp-Date.now());
-            if(d<=0){setCd("更新中...");return;}
-            setCd(`${Math.floor(d/60000)}:${String(Math.floor((d%60000)/1000)).padStart(2,"0")}`);
-          },1000);
-        }else setCd("");
-        return()=>{if(cRef.current)clearInterval(cRef.current);};
-      },[autoRef,nextUp]);
+      },[autoRef,intMin,hasDataForMonth,selMonth,fetchAll]);
 
       const allDates=useMemo(()=>{
         const s=new Set();
@@ -232,6 +336,17 @@
 
       useEffect(()=>{
         if(allDates.length>0&&!selDate){
+          // 当日の日付を取得（M/D形式）
+          const today = new Date();
+          const todayStr = `${today.getMonth()+1}/${today.getDate()}`;
+
+          // 当日のデータがあればそれを選択
+          if(allDates.includes(todayStr)){
+            setSelDate(todayStr);
+            return;
+          }
+
+          // 当日のデータがなければ、最新のデータがある日を選択
           for(let i=allDates.length-1;i>=0;i--){
             if(members.some(m=>m.projects.some(p=>(p.daily[allDates[i]]||0)!==0))){setSelDate(allDates[i]);return;}
           }
@@ -239,16 +354,40 @@
         }
       },[allDates,selDate,members]);
 
-      const rData=useMemo(()=>members.map((m,i)=>({name:m.name,dayProfit:m.projects.reduce((s,p)=>s+(p.daily[selDate]||0),0),monthTotal:m.projects.reduce((s,p)=>s+p.totalProfit,0),color:PAL[i%PAL.length]})),[members,selDate]);
+      // 前日の日付を計算
+      const yesterdayDate = useMemo(()=>{
+        if(!selDate) return "";
+        const [m,d] = selDate.split("/").map(Number);
+        const date = new Date(new Date().getFullYear(), m-1, d);
+        date.setDate(date.getDate() - 1);
+        return `${date.getMonth()+1}/${date.getDate()}`;
+      },[selDate]);
+
+      const rData=useMemo(()=>members.map((m,i)=>({name:m.name,dayProfit:m.projects.reduce((s,p)=>s+(p.daily[selDate]||0),0),yesterdayProfit:m.projects.reduce((s,p)=>s+(p.daily[yesterdayDate]||0),0),monthTotal:m.projects.reduce((s,p)=>s+p.totalProfit,0),color:COLORS[i%COLORS.length]})),[members,selDate,yesterdayDate]);
       const dayR=useMemo(()=>[...rData].sort((a,b)=>b.dayProfit-a.dayProfit),[rData]);
+      const yesterdayR=useMemo(()=>[...rData].sort((a,b)=>b.yesterdayProfit-a.yesterdayProfit),[rData]);
       const monR=useMemo(()=>[...rData].sort((a,b)=>b.monthTotal-a.monthTotal),[rData]);
-      const trend=useMemo(()=>allDates.map(d=>{const e={date:d};members.forEach(m=>{e[m.name]=m.projects.reduce((s,p)=>s+(p.daily[d]||0),0);});return e;}),[members,allDates]);
       const tDay=rData.reduce((s,r)=>s+r.dayProfit,0);
+      const tYesterday=rData.reduce((s,r)=>s+r.yesterdayProfit,0);
       const tMon=rData.reduce((s,r)=>s+r.monthTotal,0);
 
-      const saveUrl=async u=>{setGasUrl(u);await sS(SK_URL,u);};
+      const platformData=useMemo(()=>{
+        const pMap={};
+        members.forEach(m=>{
+          m.projects.forEach(p=>{
+            const platform=p.platform||'Other';
+            if(!pMap[platform]){pMap[platform]={platform,dayProfit:0,monthTotal:0};}
+            pMap[platform].dayProfit+=(p.daily[selDate]||0);
+            pMap[platform].monthTotal+=p.totalProfit;
+          });
+        });
+        return Object.values(pMap).map((p,i)=>({...p,color:COLORS[i%COLORS.length]}));
+      },[members,selDate]);
+      const platformDayR=useMemo(()=>[...platformData].sort((a,b)=>b.dayProfit-a.dayProfit),[platformData]);
+      const platformMonR=useMemo(()=>[...platformData].sort((a,b)=>b.monthTotal-a.monthTotal),[platformData]);
+
       const saveReg=async l=>{setReg(l);regRef.current=l;await sS(SK_MEM,JSON.stringify(l));};
-      const saveInt=async v=>{setIntMin(v);await sS(SK_INT,String(v));setNextUp(new Date(Date.now()+v*60*1000));};
+      const saveInt=async v=>{setIntMin(v);await sS(SK_INT,String(v));};
 
       const handleAddMember=async()=>{
         if(!addName.trim()){alert("担当者名を入力してください");return;}
@@ -263,21 +402,17 @@
         if(!newMonthYM){alert("月を選択してください");return;}
 
         const hasData = Object.values(monthUrls).some(url=>url.trim());
-        if(!hasData){alert("少なくとも1人のスプシURLを入力してください");return;}
+        if(!hasData){alert("少なくとも1人のCSV URLを入力してください");return;}
 
-        setAddLoading(true);
         const nl = reg.map(r=>{
           const url = monthUrls[r.name];
           if(!url || !url.trim()) return r;
-
-          const m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-          if(!m) return r;
 
           return {
             ...r,
             sheets: {
               ...r.sheets,
-              [newMonthYM]: m[1]
+              [newMonthYM]: url.trim()
             }
           };
         });
@@ -286,7 +421,6 @@
         setSelMonth(newMonthYM);
         setShowAddMonth(false);
         setMonthUrls({});
-        setAddLoading(false);
         fetchAll(newMonthYM);
       };
 
@@ -297,149 +431,301 @@
         setMembers(prev=>prev.filter(m=>m.name!==name));
       };
 
+      const toggleMemberExpand=(rankingType,memberName)=>{
+        const key=`${rankingType}-${memberName}`;
+        setExpandedMembers(prev=>({...prev,[key]:!prev[key]}));
+      };
+
       /* ═══ RENDER ═══ */
       return(
-        <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#060B18 0%,#0B1225 35%,#0E1630 100%)",color:"#E2E8F0",fontFamily:"'Noto Sans JP','Helvetica Neue',sans-serif"}}>
-          <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700;900&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
-          <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
+        <div style={{minHeight:"100vh",background:"#f8f9fa"}}>
+          <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
 
-          {/* ═══ HEADER ═══ */}
-          <header style={{background:"linear-gradient(135deg,rgba(245,158,11,.06),rgba(59,130,246,.04))",borderBottom:"1px solid rgba(255,255,255,.05)",padding:"18px 28px"}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:14,maxWidth:1280,margin:"0 auto"}}>
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <div style={{width:38,height:38,borderRadius:10,background:"linear-gradient(135deg,#F59E0B,#D97706)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:900,color:"#0F172A",fontFamily:"Outfit"}}>¥</div>
+          {/* HEADER */}
+          <header style={{background:"white",borderBottom:"1px solid #e5e7eb",padding:"20px 32px",boxShadow:"0 1px 3px rgba(0,0,0,.06)"}}>
+            <div style={{maxWidth:1280,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",gap:20,flexWrap:"wrap"}}>
+              <div style={{display:"flex",alignItems:"center",gap:16}}>
+                <div style={{width:48,height:48,borderRadius:12,background:"linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(37,99,235,.3)"}}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 17L9 11L13 15L21 7" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M21 7V13M21 7H15" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
                 <div>
-                  <h1 style={{fontSize:20,fontWeight:800,fontFamily:"Outfit",letterSpacing:"-.03em",margin:0,background:"linear-gradient(90deg,#F59E0B,#FBBF24)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Profit Ranking</h1>
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2}}>
-                    <p style={{fontSize:11,color:"#475569",margin:0}}>担当者別 粗利ランキング</p>
-                    {gasUrl&&autoRef&&<span style={{fontSize:10,color:"#22C55E",display:"flex",alignItems:"center",gap:4}}><span style={{width:6,height:6,borderRadius:"50%",background:"#22C55E",animation:"pulse 2s infinite"}}/>LIVE（{intMin}分更新）</span>}
-                  </div>
+                  <h1 style={{fontSize:26,fontWeight:700,margin:0,color:"#111827",letterSpacing:"-0.02em"}}>粗利ランキング</h1>
+                  {lastUp&&<p style={{fontSize:13,color:"#6b7280",margin:"6px 0 0",fontWeight:500}}>最終更新: {tS(lastUp)}</p>}
                 </div>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                {lastUp&&<div style={{fontSize:10.5,color:"#475569",textAlign:"right",lineHeight:1.5}}><div>最終: {tS(lastUp)}</div>{autoRef&&cd&&<div>次回: {cd}</div>}</div>}
-
-                {/* 月選択 */}
-                {availableMonths.length>0&&<select value={selMonth} onChange={e=>setSelMonth(e.target.value)} style={{...sel,fontWeight:600,color:"#FBBF24"}}>{availableMonths.map(m=><option key={m} value={m} style={{background:"#1E293B"}}>{formatMonth(m)}</option>)}</select>}
-
-                {allDates.length>0&&<select value={selDate} onChange={e=>setSelDate(e.target.value)} style={sel}>{allDates.map(d=><option key={d} value={d} style={{background:"#1E293B"}}>{d}</option>)}</select>}
-                {gasUrl&&<button onClick={()=>{setSelDate("");fetchAll();}} style={{...gB,fontSize:15,padding:"6px 10px"}} title="今すぐ更新">↻</button>}
-                <button onClick={()=>setShowSettings(true)} style={{...gB,fontSize:14,padding:"6px 10px"}} title="設定">⚙</button>
-                {gasUrl&&<button onClick={()=>setShowAddMonth(true)} style={pB}>📅 月次データ追加</button>}
+                {availableMonths.length>0&&<select value={selMonth} onChange={e=>setSelMonth(e.target.value)} style={sel}>{availableMonths.map(m=><option key={m} value={m}>{formatMonth(m)}</option>)}</select>}
+                {allDates.length>0&&<select value={selDate} onChange={e=>setSelDate(e.target.value)} style={sel}>{allDates.map(d=><option key={d} value={d}>{d}</option>)}</select>}
+                {hasDataForMonth&&<button onClick={()=>{setSelDate("");fetchAll();}} style={btn2}>更新</button>}
+                <button onClick={()=>setShowSettings(true)} style={btn2}>設定</button>
+                <button onClick={()=>setShowAddMonth(true)} style={btn1}>+ 月次データ追加</button>
               </div>
             </div>
           </header>
 
-          <main style={{padding:"22px 28px",maxWidth:1280,margin:"0 auto"}}>
+          <main style={{padding:"24px",maxWidth:1280,margin:"0 auto"}}>
 
-            {/* ═══ SETUP ═══ */}
+            {/* SETUP */}
             {showSetup&&(
-              <div style={ov} onClick={()=>{if(gasUrl)setShowSetup(false);}}>
-                <div style={{...mo,width:580}} onClick={e=>e.stopPropagation()}>
-                  <h3 style={{margin:"0 0 6px",fontSize:19,fontWeight:700}}>🚀 初期設定</h3>
-                  <p style={{fontSize:12.5,color:"#94A3B8",margin:"0 0 22px"}}>GASを中継サーバーとして使い、スプシから自動でデータを取得します。</p>
-                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
-                    <Step n={1} t="GASプロジェクトを作成"><a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener" style={{color:"#60A5FA",fontSize:12,textDecoration:"underline"}}>→ script.google.com で新規作成</a></Step>
-                    <Step n={2} t="コードを貼り付け"><p style={{fontSize:11.5,color:"#94A3B8",margin:0}}>ダウンロードした<strong style={{color:"#FBBF24"}}>gas-proxy.js</strong>の内容を貼り付けて保存</p></Step>
-                    <Step n={3} t="ウェブアプリとしてデプロイ"><p style={{fontSize:11.5,color:"#94A3B8",margin:0,lineHeight:1.7}}>「デプロイ」→「新しいデプロイ」→ 歯車→「ウェブアプリ」<br/><strong>実行ユーザー</strong>: 自分 / <strong>アクセス</strong>: 全員<br/>→ 承認してデプロイ</p></Step>
-                    <Step n={4} t="URLを貼り付け">
-                      <input value={gasUrl} onChange={e=>setGasUrl(e.target.value)} placeholder="https://script.google.com/macros/s/.../exec" style={{...inp,fontSize:12,fontFamily:"monospace"}}/>
-                    </Step>
-                  </div>
-                  <div style={{display:"flex",gap:10,marginTop:24,justifyContent:"flex-end"}}>
-                    {gasUrl&&<button onClick={()=>setShowSetup(false)} style={gB}>あとで</button>}
-                    <button onClick={async()=>{
-                      if(!gasUrl.includes("script.google.com"))return;
-                      await saveUrl(gasUrl.trim());
-                      setShowSetup(false);
-                      if(availableMonths.length>0)fetchAll();
-                    }} disabled={!gasUrl.includes("script.google.com")} style={{...pB,opacity:gasUrl.includes("script.google.com")?1:.5}}>接続テスト & 開始</button>
-                  </div>
+              <Modal onClose={()=>setShowSetup(false)}>
+                <h3 style={{fontSize:20,fontWeight:600,margin:"0 0 16px"}}>セットアップ手順</h3>
+                <div style={{fontSize:14,lineHeight:1.8,color:"#4b5563"}}>
+                  <p style={{marginBottom:12}}><strong>1. スプレッドシートを開く</strong><br/>担当者の「合算シート」があるスプレッドシートを開きます</p>
+                  <p style={{marginBottom:12}}><strong>2. ウェブに公開</strong><br/>ファイル → 共有 → ウェブに公開 → シート: 合算シート、形式: CSV → 公開</p>
+                  <p style={{marginBottom:12}}><strong>3. URLをコピー</strong><br/>生成されたCSV URLをコピーします</p>
+                  <p><strong>4. 月次データで登録</strong><br/>「+ 月次データ追加」から各担当者のCSV URLを登録します</p>
                 </div>
-              </div>
+                <div style={{marginTop:24,textAlign:"right"}}>
+                  <button onClick={()=>setShowSetup(false)} style={btn1}>OK</button>
+                </div>
+              </Modal>
             )}
 
-            {/* ═══ LOADING ═══ */}
+            {/* LOADING */}
             {loading&&(
-              <div style={{textAlign:"center",padding:"70px 0",animation:"fadeIn .3s"}}>
-                <div style={{width:48,height:48,border:"3px solid rgba(245,158,11,.2)",borderTopColor:"#F59E0B",borderRadius:"50%",margin:"0 auto 16px",animation:"spin .8s linear infinite"}}/>
-                <p style={{color:"#CBD5E1",fontSize:15,fontWeight:500,margin:"0 0 6px"}}>GAS経由でデータ取得中...</p>
-                <p style={{color:"#64748B",fontSize:13}}>{formatMonth(selMonth)}のデータを取得しています</p>
+              <div style={{textAlign:"center",padding:"80px 0"}}>
+                <div style={{width:48,height:48,border:"3px solid #e5e7eb",borderTopColor:"#2563eb",borderRadius:"50%",margin:"0 auto 16px",animation:"spin .8s linear infinite"}}/>
+                <p style={{color:"#6b7280",fontSize:15}}>データ取得中...</p>
               </div>
             )}
 
-            {/* ═══ ERRORS ═══ */}
+            {/* ERRORS */}
             {Object.keys(errors).length>0&&!loading&&(
-              <div style={{background:"rgba(239,68,68,.06)",border:"1px solid rgba(239,68,68,.15)",borderRadius:12,padding:"14px 18px",marginBottom:20,animation:"fadeIn .3s"}}>
-                <p style={{color:"#F87171",fontSize:13,fontWeight:600,margin:"0 0 6px"}}>⚠ エラー</p>
-                {Object.entries(errors).map(([n,e])=><p key={n} style={{color:"#FDA4AF",fontSize:12,margin:"2px 0"}}>{n}: {e}</p>)}
-                <div style={{display:"flex",gap:8,marginTop:10}}>
-                  <button onClick={()=>fetchAll()} style={{...gB,fontSize:11,padding:"5px 14px"}}>再試行</button>
-                  <button onClick={()=>setShowAddMonth(true)} style={{...gB,fontSize:11,padding:"5px 14px"}}>月次データ追加</button>
+              <div style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:"16px",marginBottom:24}}>
+                <p style={{color:"#dc2626",fontSize:14,fontWeight:600,margin:"0 0 8px"}}>エラー</p>
+                {Object.entries(errors).map(([n,e])=><p key={n} style={{color:"#991b1b",fontSize:13,margin:"4px 0"}}>{n}: {e}</p>)}
+                <div style={{marginTop:12,display:"flex",gap:8}}>
+                  <button onClick={()=>fetchAll()} style={btn2}>再試行</button>
+                  <button onClick={()=>setShowSetup(true)} style={btn2}>セットアップ手順</button>
                 </div>
               </div>
             )}
 
-            {/* ═══ NO URL ═══ */}
-            {!loading&&!gasUrl&&!showSetup&&(
-              <div style={{textAlign:"center",padding:"60px 0"}}>
-                <p style={{fontSize:44,margin:"0 0 12px"}}>⚡</p>
-                <p style={{color:"#CBD5E1",fontSize:16,fontWeight:500}}>GAS URLが未設定です</p>
-                <button onClick={()=>setShowSetup(true)} style={{...pB,marginTop:16}}>初期設定を開始</button>
+            {/* NO DATA */}
+            {!loading&&!hasDataForMonth&&(
+              <div style={{textAlign:"center",padding:"80px 0"}}>
+                <p style={{fontSize:48,margin:"0 0 16px"}}>📊</p>
+                <p style={{fontSize:18,fontWeight:500,color:"#111827",margin:"0 0 8px"}}>月次データが未登録です</p>
+                <p style={{fontSize:14,color:"#6b7280",margin:"0 0 24px"}}>スプレッドシートを公開してCSV URLを登録してください</p>
+                <div style={{display:"flex",gap:12,justifyContent:"center"}}>
+                  <button onClick={()=>setShowSetup(true)} style={btn2}>セットアップ手順</button>
+                  <button onClick={()=>setShowAddMonth(true)} style={btn1}>月次データ追加</button>
+                </div>
               </div>
             )}
 
             {!loading&&members.length>0&&(<>
-              {/* ═══ SUMMARY ═══ */}
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:24,animation:"fadeIn .4s"}}>
-                <SC l={`${selDate} 全体利益`} v={tDay} a="#3B82F6"/>
-                <SC l={`${formatMonth(selMonth)} 合計利益`} v={tMon} a="#F59E0B"/>
-                <SC l="読込済み" c={`${members.length}名`} a="#10B981"/>
-                <SC l="稼働案件" c={`${members.reduce((s,m)=>s+m.projects.filter(p=>p.totalProfit!==0||Object.values(p.daily).some(v=>v!==0)).length,0)}件`} a="#A855F7"/>
+              {/* SUMMARY */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,marginBottom:32,maxWidth:800}}>
+                <Card>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                    <p style={{fontSize:14,color:"#6b7280",fontWeight:600,margin:0}}>前日利益（{yesterdayDate}）</p>
+                    <div style={{width:40,height:40,borderRadius:10,background:"linear-gradient(135deg, #e9d5ff 0%, #d8b4fe 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>📈</div>
+                  </div>
+                  <p style={{fontSize:36,fontWeight:700,color:tYesterday>=0?"#059669":"#dc2626",margin:0,letterSpacing:"-0.02em"}}>{fF(tYesterday)}</p>
+                </Card>
+                <Card>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                    <p style={{fontSize:14,color:"#6b7280",fontWeight:600,margin:0}}>月間合計（{formatMonth(selMonth)}）</p>
+                    <div style={{width:40,height:40,borderRadius:10,background:"linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>💰</div>
+                  </div>
+                  <p style={{fontSize:36,fontWeight:700,color:tMon>=0?"#059669":"#dc2626",margin:0,letterSpacing:"-0.02em"}}>{fF(tMon)}</p>
+                </Card>
               </div>
 
-              {/* ═══ TABS ═══ */}
-              <div style={{display:"flex",gap:4,marginBottom:22}}>
-                {[{k:"ranking",l:"🏆 ランキング"},{k:"detail",l:"📋 詳細"}].map(t=>(
-                  <button key={t.k} onClick={()=>setView(t.k)} style={{background:view===t.k?"rgba(245,158,11,.12)":"rgba(255,255,255,.02)",border:view===t.k?"1px solid rgba(245,158,11,.25)":"1px solid rgba(255,255,255,.05)",borderRadius:8,color:view===t.k?"#FBBF24":"#64748B",padding:"8px 20px",fontSize:13,fontWeight:view===t.k?600:400,cursor:"pointer",transition:"all .2s"}}>{t.l}</button>
+              {/* TABS */}
+              <div style={{display:"flex",gap:4,marginBottom:20,borderBottom:"2px solid #e5e7eb"}}>
+                {[{k:"ranking",l:"ランキング"},{k:"platform",l:"媒体別"},{k:"detail",l:"メンバー別"}].map(t=>(
+                  <button key={t.k} onClick={()=>setView(t.k)} style={{background:"none",border:"none",borderBottom:view===t.k?"2px solid #2563eb":"2px solid transparent",color:view===t.k?"#2563eb":"#6b7280",padding:"12px 20px",fontSize:14,fontWeight:view===t.k?600:400,cursor:"pointer",marginBottom:-2}}>{t.l}</button>
                 ))}
               </div>
 
               {view==="ranking"&&(
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18,animation:"fadeIn .3s"}}>
-                  <RP t={`${selDate} の粗利ランキング`} dot="#3B82F6" data={dayR} dk="dayProfit" bn="日次粗利"/>
-                  <RP t={`${formatMonth(selMonth)} 合計粗利ランキング`} dot="#F59E0B" data={monR} dk="monthTotal" bn="月間合計"/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24}}>
+                  <Card>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+                      <div style={{width:10,height:10,borderRadius:"50%",background:"#7c3aed"}}/>
+                      <h3 style={{fontSize:18,fontWeight:700,margin:0,color:"#111827"}}>前日ランキング（{yesterdayDate}）</h3>
+                    </div>
+                    {yesterdayR.map((r,i)=>{
+                      const memberData=members.find(m=>m.name===r.name);
+                      const isExpanded=expandedMembers[`yesterday-${r.name}`];
+                      return(
+                        <div key={r.name} style={{marginBottom:i===0?12:8}}>
+                          <div onClick={()=>toggleMemberExpand('yesterday',r.name)} style={{display:"flex",alignItems:"center",padding:i===0?"18px 16px":"16px 12px",borderRadius:10,background:i===0?"linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)":i===1?"#f3f4f6":i===2?"#f9fafb":"transparent",border:i===0?"2px solid #fbbf24":"none",gap:14,transition:"all .15s",cursor:"pointer",boxShadow:i===0?"0 4px 16px rgba(251,191,36,.25)":"none"}}>
+                            <div style={{width:i===0?48:i<3?40:36,height:i===0?48:i<3?40:36,borderRadius:10,background:i===0?"linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)":i===1?"linear-gradient(135deg, #d1d5db 0%, #9ca3af 100%)":i===2?"linear-gradient(135deg, #fed7aa 0%, #fdba74 100%)":"#f3f4f6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:i===0?22:i<3?20:18,fontWeight:700,color:i<3?"white":"#6b7280",boxShadow:i===0?"0 4px 12px rgba(251,191,36,.4)":i<3?"0 2px 8px rgba(0,0,0,.15)":"none"}}>{i===0?"👑":i===1?"🥈":i===2?"🥉":i+1}</div>
+                            <span style={{width:14,height:14,borderRadius:"50%",background:r.color,boxShadow:"0 2px 6px rgba(0,0,0,.15)"}}/>
+                            <span style={{flex:1,fontSize:i===0?18:16,fontWeight:i===0?700:600,color:"#111827"}}>{r.name}</span>
+                            <span style={{fontSize:i===0?22:18,fontWeight:700,color:r.yesterdayProfit>=0?"#059669":"#dc2626"}}>{fF(r.yesterdayProfit)}</span>
+                            <span style={{fontSize:14,color:"#6b7280",marginLeft:8}}>{isExpanded?"▲":"▼"}</span>
+                          </div>
+                          {isExpanded&&memberData&&(
+                            <div style={{background:"#f9fafb",borderRadius:8,padding:"12px 16px",marginTop:8}}>
+                              {memberData.projects.filter(p=>(p.daily[yesterdayDate]||0)!==0).sort((a,b)=>(b.daily[yesterdayDate]||0)-(a.daily[yesterdayDate]||0)).map((p,pi)=>(
+                                <div key={pi} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:pi<memberData.projects.length-1?"1px solid #e5e7eb":"none"}}>
+                                  <div style={{flex:1}}>
+                                    <span style={{fontSize:13,fontWeight:600,color:"#111827"}}>{p.name}</span>
+                                    <span style={{marginLeft:8,background:"#eff6ff",color:"#2563eb",padding:"2px 8px",borderRadius:4,fontSize:11,fontWeight:600}}>{p.platform}</span>
+                                  </div>
+                                  <span style={{fontSize:14,fontWeight:700,color:(p.daily[yesterdayDate]||0)>=0?"#059669":"#dc2626"}}>{fF(p.daily[yesterdayDate]||0)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </Card>
+                  <Card>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+                      <div style={{width:10,height:10,borderRadius:"50%",background:"#f59e0b"}}/>
+                      <h3 style={{fontSize:18,fontWeight:700,margin:0,color:"#111827"}}>月間ランキング（{formatMonth(selMonth)}）</h3>
+                    </div>
+                    {monR.map((r,i)=>{
+                      const memberData=members.find(m=>m.name===r.name);
+                      const isExpanded=expandedMembers[`month-${r.name}`];
+                      return(
+                        <div key={r.name} style={{marginBottom:i===0?12:8}}>
+                          <div onClick={()=>toggleMemberExpand('month',r.name)} style={{display:"flex",alignItems:"center",padding:i===0?"18px 16px":"16px 12px",borderRadius:10,background:i===0?"linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)":i===1?"#f3f4f6":i===2?"#f9fafb":"transparent",border:i===0?"2px solid #fbbf24":"none",gap:14,transition:"all .15s",cursor:"pointer",boxShadow:i===0?"0 4px 16px rgba(251,191,36,.25)":"none"}}>
+                            <div style={{width:i===0?48:i<3?40:36,height:i===0?48:i<3?40:36,borderRadius:10,background:i===0?"linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)":i===1?"linear-gradient(135deg, #d1d5db 0%, #9ca3af 100%)":i===2?"linear-gradient(135deg, #fed7aa 0%, #fdba74 100%)":"#f3f4f6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:i===0?22:i<3?20:18,fontWeight:700,color:i<3?"white":"#6b7280",boxShadow:i===0?"0 4px 12px rgba(251,191,36,.4)":i<3?"0 2px 8px rgba(0,0,0,.15)":"none"}}>{i===0?"👑":i===1?"🥈":i===2?"🥉":i+1}</div>
+                            <span style={{width:14,height:14,borderRadius:"50%",background:r.color,boxShadow:"0 2px 6px rgba(0,0,0,.15)"}}/>
+                            <span style={{flex:1,fontSize:i===0?18:16,fontWeight:i===0?700:600,color:"#111827"}}>{r.name}</span>
+                            <span style={{fontSize:i===0?22:18,fontWeight:700,color:r.monthTotal>=0?"#059669":"#dc2626"}}>{fF(r.monthTotal)}</span>
+                            <span style={{fontSize:14,color:"#6b7280",marginLeft:8}}>{isExpanded?"▲":"▼"}</span>
+                          </div>
+                          {isExpanded&&memberData&&(
+                            <div style={{background:"#f9fafb",borderRadius:8,padding:"12px 16px",marginTop:8}}>
+                              {memberData.projects.filter(p=>p.totalProfit!==0).sort((a,b)=>b.totalProfit-a.totalProfit).map((p,pi)=>(
+                                <div key={pi} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:pi<memberData.projects.length-1?"1px solid #e5e7eb":"none"}}>
+                                  <div style={{flex:1}}>
+                                    <span style={{fontSize:13,fontWeight:600,color:"#111827"}}>{p.name}</span>
+                                    <span style={{marginLeft:8,background:"#eff6ff",color:"#2563eb",padding:"2px 8px",borderRadius:4,fontSize:11,fontWeight:600}}>{p.platform}</span>
+                                  </div>
+                                  <span style={{fontSize:14,fontWeight:700,color:p.totalProfit>=0?"#059669":"#dc2626"}}>{fF(p.totalProfit)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </Card>
+                </div>
+              )}
+
+              {view==="platform"&&(
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24}}>
+                  <Card>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+                      <div style={{width:10,height:10,borderRadius:"50%",background:"#7c3aed"}}/>
+                      <h3 style={{fontSize:18,fontWeight:700,margin:0,color:"#111827"}}>媒体別日次（{selDate}）</h3>
+                    </div>
+                    {platformDayR.map((r,i)=>{
+                      const isExpanded=expandedMembers[`platform-day-${r.platform}`];
+                      const platformProjects=[];
+                      members.forEach(m=>{
+                        m.projects.filter(p=>p.platform===r.platform&&(p.daily[selDate]||0)!==0).forEach(p=>{
+                          platformProjects.push({...p,memberName:m.name});
+                        });
+                      });
+                      platformProjects.sort((a,b)=>(b.daily[selDate]||0)-(a.daily[selDate]||0));
+                      return(
+                        <div key={r.platform} style={{marginBottom:8}}>
+                          <div onClick={()=>toggleMemberExpand('platform-day',r.platform)} style={{display:"flex",alignItems:"center",padding:"14px 12px",borderRadius:8,background:"#f9fafb",gap:14,cursor:"pointer",transition:"all .15s"}}>
+                            <div style={{width:36,height:36,borderRadius:8,background:"linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:"white",boxShadow:"0 2px 8px rgba(37,99,235,.25)"}}>{i+1}</div>
+                            <span style={{flex:1,fontSize:16,fontWeight:600,color:"#111827"}}>{r.platform}</span>
+                            <span style={{fontSize:18,fontWeight:700,color:r.dayProfit>=0?"#059669":"#dc2626"}}>{fF(r.dayProfit)}</span>
+                            <span style={{fontSize:14,color:"#6b7280",marginLeft:8}}>{isExpanded?"▲":"▼"}</span>
+                          </div>
+                          {isExpanded&&platformProjects.length>0&&(
+                            <div style={{background:"#ffffff",border:"1px solid #e5e7eb",borderRadius:8,padding:"12px 16px",marginTop:8}}>
+                              {platformProjects.map((p,pi)=>(
+                                <div key={pi} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:pi<platformProjects.length-1?"1px solid #f3f4f6":"none"}}>
+                                  <div style={{flex:1}}>
+                                    <span style={{fontSize:13,fontWeight:600,color:"#111827"}}>{p.name}</span>
+                                    <span style={{marginLeft:8,background:"#f3f4f6",color:"#6b7280",padding:"2px 8px",borderRadius:4,fontSize:11,fontWeight:600}}>{p.memberName}</span>
+                                  </div>
+                                  <span style={{fontSize:14,fontWeight:700,color:(p.daily[selDate]||0)>=0?"#059669":"#dc2626"}}>{fF(p.daily[selDate]||0)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </Card>
+                  <Card>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+                      <div style={{width:10,height:10,borderRadius:"50%",background:"#059669"}}/>
+                      <h3 style={{fontSize:18,fontWeight:700,margin:0,color:"#111827"}}>媒体別月間（{formatMonth(selMonth)}）</h3>
+                    </div>
+                    {platformMonR.map((r,i)=>{
+                      const isExpanded=expandedMembers[`platform-month-${r.platform}`];
+                      const platformProjects=[];
+                      members.forEach(m=>{
+                        m.projects.filter(p=>p.platform===r.platform&&p.totalProfit!==0).forEach(p=>{
+                          platformProjects.push({...p,memberName:m.name});
+                        });
+                      });
+                      platformProjects.sort((a,b)=>b.totalProfit-a.totalProfit);
+                      return(
+                        <div key={r.platform} style={{marginBottom:8}}>
+                          <div onClick={()=>toggleMemberExpand('platform-month',r.platform)} style={{display:"flex",alignItems:"center",padding:"14px 12px",borderRadius:8,background:"#f9fafb",gap:14,cursor:"pointer",transition:"all .15s"}}>
+                            <div style={{width:36,height:36,borderRadius:8,background:"linear-gradient(135deg, #059669 0%, #047857 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:"white",boxShadow:"0 2px 8px rgba(5,150,105,.25)"}}>{i+1}</div>
+                            <span style={{flex:1,fontSize:16,fontWeight:600,color:"#111827"}}>{r.platform}</span>
+                            <span style={{fontSize:18,fontWeight:700,color:r.monthTotal>=0?"#059669":"#dc2626"}}>{fF(r.monthTotal)}</span>
+                            <span style={{fontSize:14,color:"#6b7280",marginLeft:8}}>{isExpanded?"▲":"▼"}</span>
+                          </div>
+                          {isExpanded&&platformProjects.length>0&&(
+                            <div style={{background:"#ffffff",border:"1px solid #e5e7eb",borderRadius:8,padding:"12px 16px",marginTop:8}}>
+                              {platformProjects.map((p,pi)=>(
+                                <div key={pi} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:pi<platformProjects.length-1?"1px solid #f3f4f6":"none"}}>
+                                  <div style={{flex:1}}>
+                                    <span style={{fontSize:13,fontWeight:600,color:"#111827"}}>{p.name}</span>
+                                    <span style={{marginLeft:8,background:"#f3f4f6",color:"#6b7280",padding:"2px 8px",borderRadius:4,fontSize:11,fontWeight:600}}>{p.memberName}</span>
+                                  </div>
+                                  <span style={{fontSize:14,fontWeight:700,color:p.totalProfit>=0?"#059669":"#dc2626"}}>{fF(p.totalProfit)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </Card>
                 </div>
               )}
 
               {view==="detail"&&(
-                <div style={{display:"flex",flexDirection:"column",gap:16,animation:"fadeIn .3s"}}>
+                <div style={{display:"flex",flexDirection:"column",gap:20}}>
                   {members.map((m,mi)=>{
                     const ap=m.projects.filter(p=>p.totalProfit!==0||Object.values(p.daily).some(v=>v!==0));
                     if(!ap.length)return null;
                     const mT=ap.reduce((s,p)=>s+p.totalProfit,0);
                     return(
-                      <div key={m.name} style={card}>
-                        <h3 style={{...cH,justifyContent:"space-between"}}>
-                          <span style={{display:"flex",alignItems:"center",gap:10}}>
-                            <span style={{width:28,height:28,borderRadius:8,background:PAL[mi%PAL.length],display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#0F172A"}}>{m.name[0]}</span>{m.name}
-                          </span>
-                          <span style={{fontSize:12,color:"#64748B"}}>月間: <span style={{color:mT>=0?"#10B981":"#EF4444",fontWeight:700,fontFamily:"Outfit"}}>{fF(mT)}</span></span>
-                        </h3>
-                        <div style={{overflowX:"auto"}}>
-                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                      <Card key={m.name}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+                          <div style={{display:"flex",alignItems:"center",gap:12}}>
+                            <div style={{width:44,height:44,borderRadius:10,background:COLORS[mi%COLORS.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:700,color:"white",boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>{m.name[0]}</div>
+                            <h3 style={{fontSize:18,fontWeight:700,margin:0,color:"#111827"}}>{m.name}</h3>
+                          </div>
+                          <div style={{textAlign:"right"}}>
+                            <p style={{fontSize:12,color:"#6b7280",margin:"0 0 4px",fontWeight:600}}>月間合計</p>
+                            <p style={{fontSize:20,color:mT>=0?"#059669":"#dc2626",fontWeight:700,margin:0}}>{fF(mT)}</p>
+                          </div>
+                        </div>
+                        <div style={{overflowX:"auto",borderRadius:8,border:"1px solid #e5e7eb"}}>
+                          <table style={{width:"100%",borderCollapse:"collapse"}}>
                             <thead><tr><th style={th}>案件名</th><th style={th}>媒体</th><th style={{...th,textAlign:"right"}}>月間合計</th><th style={{...th,textAlign:"right"}}>{selDate}</th></tr></thead>
                             <tbody>{ap.map((p,pi)=>(
-                              <tr key={pi} style={{borderBottom:"1px solid rgba(255,255,255,.03)"}}>
-                                <td style={td}>{p.name}</td>
-                                <td style={td}><PB p={p.platform}/></td>
-                                <td style={{...td,textAlign:"right",color:p.totalProfit>=0?"#10B981":"#EF4444",fontWeight:600,fontFamily:"Outfit"}}>{fF(p.totalProfit)}</td>
-                                <td style={{...td,textAlign:"right",color:(p.daily[selDate]||0)>=0?"#CBD5E1":"#EF4444",fontFamily:"Outfit"}}>{fF(p.daily[selDate]||0)}</td>
-                              </tr>
+                              <tr key={pi} style={{background:pi%2===0?"white":"#f9fafb"}}><td style={td}>{p.name}</td><td style={td}><span style={{background:"#eff6ff",color:"#2563eb",padding:"4px 10px",borderRadius:6,fontSize:12,fontWeight:600}}>{p.platform}</span></td><td style={{...td,textAlign:"right",color:p.totalProfit>=0?"#059669":"#dc2626",fontWeight:700}}>{fF(p.totalProfit)}</td><td style={{...td,textAlign:"right",color:(p.daily[selDate]||0)>=0?"#111827":"#dc2626",fontWeight:600}}>{fF(p.daily[selDate]||0)}</td></tr>
                             ))}</tbody>
                           </table>
                         </div>
-                      </div>
+                      </Card>
                     );
                   })}
                 </div>
@@ -447,146 +733,107 @@
             </>)}
           </main>
 
-          {/* ═══ ADD MONTH DATA ═══ */}
+          {/* ADD MONTH */}
           {showAddMonth&&(
-            <div style={ov} onClick={()=>{setShowAddMonth(false);setMonthUrls({});}}>
-              <div style={{...mo,width:620}} onClick={e=>e.stopPropagation()}>
-                <h3 style={{margin:"0 0 6px",fontSize:17,fontWeight:700}}>📅 月次データ追加</h3>
-                <p style={{fontSize:12,color:"#94A3B8",margin:"0 0 20px"}}>各担当者の月次スプレッドシートURLを貼り付けてください</p>
-
-                <label style={lb}>対象月</label>
-                <input type="month" value={newMonthYM} onChange={e=>setNewMonthYM(e.target.value)} style={{...inp,marginBottom:20}}/>
-
-                <div style={{maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:12}}>
-                  {reg.map((r,i)=>(
-                    <div key={i}>
-                      <label style={lb}>
-                        <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
-                          <span style={{width:20,height:20,borderRadius:5,background:PAL[i%PAL.length],display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#0F172A"}}>{r.name[0]}</span>
-                          {r.name}
-                        </span>
-                      </label>
-                      <input
-                        value={monthUrls[r.name]||""}
-                        onChange={e=>setMonthUrls({...monthUrls,[r.name]:e.target.value})}
-                        placeholder="https://docs.google.com/spreadsheets/d/..."
-                        style={{...inp,fontSize:11,fontFamily:"monospace"}}
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                <div style={{display:"flex",gap:10,marginTop:22,justifyContent:"flex-end"}}>
-                  <button onClick={()=>{setShowAddMonth(false);setMonthUrls({});}} style={gB}>キャンセル</button>
-                  <button onClick={handleAddMonthData} disabled={addLoading} style={{...pB,opacity:addLoading?.6:1}}>{addLoading?"読み込み中...":"追加して取得"}</button>
-                </div>
+            <Modal onClose={()=>{setShowAddMonth(false);setMonthUrls({});}}>
+              <h3 style={{fontSize:18,fontWeight:600,margin:"0 0 16px"}}>月次データ追加</h3>
+              <p style={{fontSize:13,color:"#6b7280",margin:"0 0 16px"}}>各担当者の「合算シート」CSV公開URLを貼り付けてください</p>
+              <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:6,padding:"12px",marginBottom:16}}>
+                <p style={{fontSize:12,color:"#1e40af",margin:"0 0 4px",fontWeight:600}}>CSV URLの取得方法</p>
+                <p style={{fontSize:11,color:"#3b82f6",margin:0}}>スプレッドシートで「ファイル → 共有 → ウェブに公開」→ シート: 合算シート、形式: CSV → 公開</p>
+                <button onClick={()=>setShowSetup(true)} style={{background:"none",border:"none",color:"#2563eb",fontSize:11,padding:"4px 0",cursor:"pointer",textDecoration:"underline"}}>→ 詳細手順を見る</button>
               </div>
-            </div>
-          )}
-
-          {/* ═══ ADD MEMBER ═══ */}
-          {showAdd&&(
-            <div style={ov} onClick={()=>{setShowAdd(false);setAddName("");}}>
-              <div style={mo} onClick={e=>e.stopPropagation()}>
-                <h3 style={{margin:"0 0 20px",fontSize:17,fontWeight:700}}>担当者を追加</h3>
-                <label style={lb}>担当者名</label>
-                <input value={addName} onChange={e=>setAddName(e.target.value)} placeholder="例：山田" style={inp}/>
-                <p style={{fontSize:11,color:"#475569",margin:"8px 0 0"}}>※ 追加後、月次データから各月のスプシを登録してください</p>
-                <div style={{display:"flex",gap:10,marginTop:22,justifyContent:"flex-end"}}>
-                  <button onClick={()=>{setShowAdd(false);setAddName("");}} style={gB}>キャンセル</button>
-                  <button onClick={handleAddMember} style={pB}>追加</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ═══ SETTINGS ═══ */}
-          {showSettings&&(
-            <div style={ov} onClick={()=>setShowSettings(false)}>
-              <div style={{...mo,width:540}} onClick={e=>e.stopPropagation()}>
-                <h3 style={{margin:"0 0 20px",fontSize:17,fontWeight:700}}>⚙ 設定</h3>
-
-                <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
-                  <p style={{fontSize:13,fontWeight:500,margin:"0 0 6px"}}>GAS ウェブアプリURL</p>
-                  <div style={{display:"flex",gap:8}}>
-                    <input value={gasUrl} onChange={e=>setGasUrl(e.target.value)} style={{...inp,flex:1,fontSize:11,fontFamily:"monospace"}}/>
-                    <button onClick={async()=>{await saveUrl(gasUrl.trim());fetchAll();}} style={{...pB,fontSize:11,padding:"6px 14px",whiteSpace:"nowrap"}}>保存&再取得</button>
+              <label style={lb}>対象月</label>
+              <input type="month" value={newMonthYM} onChange={e=>setNewMonthYM(e.target.value)} style={{...inp,marginBottom:16}}/>
+              <div style={{maxHeight:320,overflowY:"auto",display:"flex",flexDirection:"column",gap:12}}>
+                {reg.map(r=>(
+                  <div key={r.name}>
+                    <label style={lb}>{r.name}</label>
+                    <input value={monthUrls[r.name]||""} onChange={e=>setMonthUrls({...monthUrls,[r.name]:e.target.value})} placeholder="https://docs.google.com/.../pub?gid=...&output=csv" style={inp}/>
                   </div>
-                  <button onClick={()=>{setShowSettings(false);setShowSetup(true);}} style={{background:"none",border:"none",color:"#60A5FA",fontSize:11,padding:"6px 0",cursor:"pointer",textDecoration:"underline"}}>→ セットアップ手順を確認</button>
-                </div>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:8,marginTop:20,justifyContent:"flex-end"}}>
+                <button onClick={()=>{setShowAddMonth(false);setMonthUrls({});}} style={btn2}>キャンセル</button>
+                <button onClick={handleAddMonthData} style={btn1}>追加して取得</button>
+              </div>
+            </Modal>
+          )}
 
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
-                  <div><p style={{fontSize:13,fontWeight:500,margin:0}}>自動更新</p><p style={{fontSize:11,color:"#64748B",margin:"2px 0 0"}}>定期的にスプシから再取得</p></div>
-                  <button onClick={()=>setAutoRef(!autoRef)} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",position:"relative",transition:"all .2s",background:autoRef?"#22C55E":"rgba(255,255,255,.1)"}}>
-                    <div style={{width:20,height:20,borderRadius:"50%",background:"white",position:"absolute",top:3,left:autoRef?25:3,transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,.3)"}}/>
+          {/* ADD MEMBER */}
+          {showAdd&&(
+            <Modal onClose={()=>{setShowAdd(false);setAddName("");}}>
+              <h3 style={{fontSize:18,fontWeight:600,margin:"0 0 16px"}}>担当者を追加</h3>
+              <label style={lb}>担当者名</label>
+              <input value={addName} onChange={e=>setAddName(e.target.value)} placeholder="例：山田" style={inp}/>
+              <div style={{display:"flex",gap:8,marginTop:20,justifyContent:"flex-end"}}>
+                <button onClick={()=>{setShowAdd(false);setAddName("");}} style={btn2}>キャンセル</button>
+                <button onClick={handleAddMember} style={btn1}>追加</button>
+              </div>
+            </Modal>
+          )}
+
+          {/* SETTINGS */}
+          {showSettings&&(
+            <Modal onClose={()=>setShowSettings(false)}>
+              <h3 style={{fontSize:18,fontWeight:600,margin:"0 0 16px"}}>設定</h3>
+
+              <div style={{padding:"12px 0",borderBottom:"1px solid #e5e7eb"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div>
+                    <p style={{fontSize:14,fontWeight:500,margin:0}}>自動更新</p>
+                    <p style={{fontSize:12,color:"#6b7280",margin:"2px 0 0"}}>定期的にスプシから再取得</p>
+                  </div>
+                  <button onClick={()=>setAutoRef(!autoRef)} style={{width:44,height:24,borderRadius:12,border:"1px solid #e5e7eb",cursor:"pointer",position:"relative",background:autoRef?"#2563eb":"#e5e7eb"}}>
+                    <div style={{width:18,height:18,borderRadius:"50%",background:"white",position:"absolute",top:2,left:autoRef?22:2,transition:"left .2s"}}/>
                   </button>
                 </div>
-
-                {autoRef&&<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
-                  <p style={{fontSize:13,fontWeight:500,margin:0}}>更新間隔</p>
-                  <select value={intMin} onChange={e=>saveInt(Number(e.target.value))} style={{...sel,width:100}}>{[1,3,5,10,15,30].map(v=><option key={v} value={v} style={{background:"#1E293B"}}>{v}分</option>)}</select>
-                </div>}
-
-                <div style={{marginTop:20}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-                    <p style={{fontSize:13,fontWeight:600,margin:0}}>登録担当者（{reg.length}名）</p>
-                    <button onClick={()=>{setShowSettings(false);setShowAdd(true);}} style={{...pB,fontSize:11,padding:"4px 12px"}}>+ 追加</button>
-                  </div>
-                  {reg.map((r,i)=>(
-                    <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,.04)"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <span style={{width:24,height:24,borderRadius:6,background:PAL[i%PAL.length],display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#0F172A"}}>{r.name[0]}</span>
-                        <div>
-                          <span style={{fontSize:13,fontWeight:500,display:"block"}}>{r.name}</span>
-                          <span style={{fontSize:10,color:"#64748B"}}>{Object.keys(r.sheets||{}).length}ヶ月分登録済み</span>
-                        </div>
-                      </div>
-                      <button onClick={()=>removeMember(r.name)} style={{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.15)",color:"#F87171",cursor:"pointer",fontSize:11,padding:"4px 10px",borderRadius:6}}>削除</button>
-                    </div>
-                  ))}
-                </div>
-                <div style={{display:"flex",justifyContent:"flex-end",marginTop:22}}><button onClick={()=>setShowSettings(false)} style={pB}>閉じる</button></div>
               </div>
-            </div>
+
+              {autoRef&&<div style={{padding:"12px 0",borderBottom:"1px solid #e5e7eb"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <p style={{fontSize:14,fontWeight:500,margin:0}}>更新間隔</p>
+                  <select value={intMin} onChange={e=>saveInt(Number(e.target.value))} style={sel}>{[1,3,5,10,15,30].map(v=><option key={v} value={v}>{v}分</option>)}</select>
+                </div>
+              </div>}
+
+              <div style={{marginTop:16}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                  <p style={{fontSize:14,fontWeight:600,margin:0}}>登録担当者（{reg.length}名）</p>
+                  <button onClick={()=>{setShowSettings(false);setShowAdd(true);}} style={btn1}>+ 追加</button>
+                </div>
+                {reg.map(r=>(
+                  <div key={r.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #f3f4f6"}}>
+                    <div>
+                      <span style={{fontSize:14,fontWeight:500}}>{r.name}</span>
+                      <span style={{fontSize:12,color:"#6b7280",marginLeft:8}}>{Object.keys(r.sheets||{}).length}ヶ月分登録済み</span>
+                    </div>
+                    <button onClick={()=>removeMember(r.name)} style={{background:"#fef2f2",border:"1px solid #fecaca",color:"#dc2626",cursor:"pointer",fontSize:12,padding:"4px 12px",borderRadius:4}}>削除</button>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:20,gap:8}}>
+                <button onClick={()=>setShowSetup(true)} style={btn2}>セットアップ手順</button>
+                <button onClick={()=>setShowSettings(false)} style={btn1}>閉じる</button>
+              </div>
+            </Modal>
           )}
         </div>
       );
     }
 
-    /* ═══ Components ═══ */
-    function SC({l,v,c,a}){return(<div style={{background:"rgba(255,255,255,.025)",border:"1px solid rgba(255,255,255,.05)",borderRadius:14,padding:"16px 20px",position:"relative",overflow:"hidden"}}><div style={{position:"absolute",top:0,left:0,width:3,height:"100%",background:a,borderRadius:"3px 0 0 3px"}}/><p style={{fontSize:11,color:"#64748B",margin:"0 0 5px",fontWeight:500}}>{l}</p>{v!==undefined&&v!==null?<p style={{fontSize:22,fontWeight:700,fontFamily:"Outfit",color:v>=0?"#E2E8F0":"#EF4444",margin:0}}>{fF(v)}</p>:<p style={{fontSize:22,fontWeight:700,fontFamily:"Outfit",color:"#E2E8F0",margin:0}}>{c}</p>}</div>);}
+    /* Components */
+    function Card({children}){return(<div className="card-hover" style={{background:"white",border:"1px solid #e5e7eb",borderRadius:12,padding:"24px",boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>{children}</div>);}
+    function Modal({children,onClose}){return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}><div onClick={e=>e.stopPropagation()} style={{background:"white",borderRadius:16,padding:"32px",width:560,maxWidth:"92vw",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.3)"}}>{children}</div></div>);}
 
-    function RP({t,dot,data,dk,bn}){
-      const medals={1:"🥇",2:"🥈",3:"🥉"};
-      return(<div style={card}>
-        <h3 style={cH}><span style={{color:dot,fontSize:10}}>●</span> {t}</h3>
-        {data.map((r,i)=>{const val=r[dk];return(
-          <div key={r.name} style={{display:"flex",alignItems:"center",padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,.03)",gap:12}}>
-            <span style={{fontSize:20,width:32,textAlign:"center"}}>{medals[i+1]||<span style={{fontSize:15,color:"#475569",fontWeight:600}}>{i+1}</span>}</span>
-            <span style={{width:10,height:10,borderRadius:"50%",background:r.color,flexShrink:0}}/>
-            <span style={{flex:1,fontSize:15,fontWeight:600}}>{r.name}</span>
-            <span style={{fontSize:18,fontWeight:700,fontFamily:"Outfit",color:val>=0?"#10B981":"#EF4444"}}>{fF(val)}</span>
-          </div>);})}
-      </div>);
-    }
+    const sel={background:"white",border:"1.5px solid #d1d5db",borderRadius:8,color:"#111827",padding:"10px 14px",fontSize:14,cursor:"pointer",outline:"none",transition:"all .15s"};
+    const btn1={background:"linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",border:"none",borderRadius:8,color:"white",padding:"10px 20px",fontSize:14,fontWeight:600,cursor:"pointer",boxShadow:"0 2px 8px rgba(37,99,235,.25)",transition:"all .15s"};
+    const btn2={background:"white",border:"1.5px solid #d1d5db",borderRadius:8,color:"#374151",padding:"10px 20px",fontSize:14,fontWeight:500,cursor:"pointer",transition:"all .15s"};
+    const lb={fontSize:13,color:"#374151",fontWeight:600,display:"block",marginBottom:6};
+    const inp={width:"100%",background:"white",border:"1.5px solid #d1d5db",borderRadius:8,color:"#111827",padding:"10px 14px",fontSize:14,outline:"none",transition:"border .15s"};
+    const th={textAlign:"left",padding:"12px 16px",color:"#6b7280",fontWeight:600,borderBottom:"2px solid #e5e7eb",fontSize:13,background:"#f9fafb"};
+    const td={padding:"12px 16px",borderBottom:"1px solid #f3f4f6",fontSize:14};
 
-    function PB({p}){const m={TikTok:{bg:"rgba(232,121,249,.1)",c:"#E879F9",b:"rgba(232,121,249,.2)"},Meta:{bg:"rgba(59,130,246,.1)",c:"#60A5FA",b:"rgba(59,130,246,.2)"},Google:{bg:"rgba(16,185,129,.1)",c:"#34D399",b:"rgba(16,185,129,.2)"},"LINE/LAP":{bg:"rgba(6,182,212,.1)",c:"#22D3EE",b:"rgba(6,182,212,.2)"},Other:{bg:"rgba(255,255,255,.04)",c:"#94A3B8",b:"rgba(255,255,255,.08)"}};const s=m[p]||m.Other;return<span style={{background:s.bg,color:s.c,border:`1px solid ${s.b}`,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:500}}>{p}</span>;}
-
-    function Step({n,t,children}){return(<div style={{display:"flex",gap:14}}><div style={{width:28,height:28,borderRadius:8,background:"rgba(245,158,11,.12)",border:"1px solid rgba(245,158,11,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#FBBF24",flexShrink:0}}>{n}</div><div style={{flex:1}}><p style={{fontSize:13,fontWeight:600,margin:"0 0 4px"}}>{t}</p>{children}</div></div>);}
-
-    const card={background:"rgba(255,255,255,.025)",border:"1px solid rgba(255,255,255,.05)",borderRadius:16,padding:"20px 22px"};
-    const cH={fontSize:14,fontWeight:600,margin:"0 0 14px",display:"flex",alignItems:"center",gap:8};
-    const th={textAlign:"left",padding:"7px 12px",color:"#475569",fontWeight:500,borderBottom:"1px solid rgba(255,255,255,.06)",whiteSpace:"nowrap",fontSize:11.5};
-    const td={padding:"9px 12px",whiteSpace:"nowrap"};
-    const sel={background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,color:"#E2E8F0",padding:"7px 12px",fontSize:12.5,cursor:"pointer",outline:"none"};
-    const pB={background:"linear-gradient(135deg,#F59E0B,#D97706)",border:"none",borderRadius:8,color:"#0F172A",padding:"8px 18px",fontSize:12.5,fontWeight:600,cursor:"pointer"};
-    const gB={background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,color:"#94A3B8",padding:"8px 18px",fontSize:12.5,cursor:"pointer"};
-    const lb={fontSize:12,color:"#94A3B8",display:"block",marginBottom:5};
-    const inp={width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,color:"#E2E8F0",padding:"9px 14px",fontSize:13.5,outline:"none",boxSizing:"border-box"};
-    const ov={position:"fixed",inset:0,background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999};
-    const mo={background:"linear-gradient(160deg,#1A2332,#1E293B)",borderRadius:18,padding:"28px 32px",width:480,maxWidth:"92vw",border:"1px solid rgba(255,255,255,.08)",boxShadow:"0 24px 64px rgba(0,0,0,.5)",maxHeight:"85vh",overflowY:"auto"};
-
-    // Render
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<Dashboard />);
   </script>
