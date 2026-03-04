@@ -719,9 +719,9 @@
                         </div>
                         <div style={{overflowX:"auto",borderRadius:8,border:"1px solid #e5e7eb"}}>
                           <table style={{width:"100%",borderCollapse:"collapse"}}>
-                            <thead><tr><th style={th}>案件名</th><th style={th}>媒体</th><th style={{...th,textAlign:"right"}}>月間合計</th><th style={{...th,textAlign:"right"}}>{selDate}</th></tr></thead>
+                            <thead><tr><th style={th}>案件名</th><th style={th}>媒体</th><th style={{...th,textAlign:"right"}}>月間合計</th><th style={{...th,textAlign:"right"}}>{yesterdayDate}</th></tr></thead>
                             <tbody>{ap.map((p,pi)=>(
-                              <tr key={pi} style={{background:pi%2===0?"white":"#f9fafb"}}><td style={td}>{p.name}</td><td style={td}><span style={{background:"#eff6ff",color:"#2563eb",padding:"4px 10px",borderRadius:6,fontSize:12,fontWeight:600}}>{p.platform}</span></td><td style={{...td,textAlign:"right",color:p.totalProfit>=0?"#059669":"#dc2626",fontWeight:700}}>{fF(p.totalProfit)}</td><td style={{...td,textAlign:"right",color:(p.daily[selDate]||0)>=0?"#111827":"#dc2626",fontWeight:600}}>{fF(p.daily[selDate]||0)}</td></tr>
+                              <tr key={pi} style={{background:pi%2===0?"white":"#f9fafb"}}><td style={td}>{p.name}</td><td style={td}><span style={{background:"#eff6ff",color:"#2563eb",padding:"4px 10px",borderRadius:6,fontSize:12,fontWeight:600}}>{p.platform}</span></td><td style={{...td,textAlign:"right",color:p.totalProfit>=0?"#059669":"#dc2626",fontWeight:700}}>{fF(p.totalProfit)}</td><td style={{...td,textAlign:"right",color:(p.daily[yesterdayDate]||0)>=0?"#111827":"#dc2626",fontWeight:600}}>{fF(p.daily[yesterdayDate]||0)}</td></tr>
                             ))}</tbody>
                           </table>
                         </div>
