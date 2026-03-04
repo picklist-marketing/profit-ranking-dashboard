@@ -283,8 +283,8 @@
       const [addName, setAddName] = useState("");
       const [lastUp, setLastUp] = useState(null);
       const [expandedMembers, setExpandedMembers] = useState({});
-      const [autoRef, setAutoRef] = useState(false);
-      const [intMin, setIntMin] = useState(5);
+      const [autoRef, setAutoRef] = useState(true);
+      const [intMin, setIntMin] = useState(3);
       const [initDone, setInitDone] = useState(false);
       const [monthUrls, setMonthUrls] = useState({});
       const [newMonthYM, setNewMonthYM] = useState(getCurrentMonth());
@@ -342,6 +342,9 @@
           if (v) {
             const n = parseInt(v);
             if (!isNaN(n)) setIntMin(n);
+          } else {
+            // デフォルト値を保存
+            await sS(SK_INT, '3');
           }
           setInitDone(true);
         })();
