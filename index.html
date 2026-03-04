@@ -34,6 +34,7 @@
     const COLORS = ["#2563eb","#dc2626","#059669","#7c3aed","#db2777","#0891b2","#ea580c","#65a30d"];
     const SK_MEM = "profit-ranking-members-csv";
     const SK_INT = "profit-ranking-interval";
+    const SK_CONFIG = "profit-ranking-config-url";
 
     const DEFAULT_MEMBERS = [
       { name:"加藤", sheets:{} },
@@ -215,6 +216,55 @@
       }
     }
 
+    /* ═══ Config Spreadsheet Loader ═══ */
+    async function loadConfigSpreadsheet(configUrl) {
+      try {
+        const response = await fetch(configUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const csvText = await response.text();
+        const rows = parseCSV(csvText);
+
+        if (rows.length < 2) throw new Error("設定スプレッドシートが空です");
+
+        const header = rows[0];
+        const memberCol = 0; // メンバー名は1列目
+        const monthCols = {}; // 月の列インデックス
+
+        // ヘッダーから月の列を取得（2026-03形式）
+        for (let i = 1; i < header.length; i++) {
+          const monthKey = header[i].trim();
+          if (/^\d{4}-\d{2}$/.test(monthKey)) {
+            monthCols[monthKey] = i;
+          }
+        }
+
+        if (Object.keys(monthCols).length === 0) {
+          throw new Error("月のヘッダーが見つかりません（例: 2026-03）");
+        }
+
+        const members = [];
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          const memberName = row[memberCol]?.trim();
+          if (!memberName) continue;
+
+          const sheets = {};
+          for (const [monthKey, colIdx] of Object.entries(monthCols)) {
+            const url = row[colIdx]?.trim();
+            if (url && url.startsWith('http')) {
+              sheets[monthKey] = url;
+            }
+          }
+
+          members.push({ name: memberName, sheets });
+        }
+
+        return members;
+      } catch (error) {
+        throw new Error(`設定読込エラー: ${error.message}`);
+      }
+    }
+
     /* ═══════════════════════════════════════════════════════════
        MAIN
        ═══════════════════════════════════════════════════════════ */
@@ -238,6 +288,8 @@
       const [initDone, setInitDone] = useState(false);
       const [monthUrls, setMonthUrls] = useState({});
       const [newMonthYM, setNewMonthYM] = useState(getCurrentMonth());
+      const [configUrl, setConfigUrl] = useState("");
+      const [showConfigSetup, setShowConfigSetup] = useState(false);
       const iRef = useRef(null);
       const regRef = useRef(reg);
       const intRef = useRef(intMin);
@@ -250,9 +302,47 @@
       /* ── Init ─── */
       useEffect(()=>{
         (async()=>{
-          const m=await sG(SK_MEM), v=await sG(SK_INT);
-          if(m){try{const p=JSON.parse(m);if(Array.isArray(p)&&p.length)setReg(p);}catch{}}
-          if(v){const n=parseInt(v);if(!isNaN(n))setIntMin(n);}
+          const configUrlStored = await sG(SK_CONFIG);
+          const v = await sG(SK_INT);
+
+          if (configUrlStored) {
+            setConfigUrl(configUrlStored);
+          }
+
+          // 設定スプレッドシートから読み込む
+          if (configUrlStored) {
+            try {
+              const members = await loadConfigSpreadsheet(configUrlStored);
+              if (members && members.length > 0) {
+                setReg(members);
+                await sS(SK_MEM, JSON.stringify(members)); // localStorageにもバックアップ
+              }
+            } catch (error) {
+              console.error('Config load error:', error);
+              // フォールバック: localStorageから読み込む
+              const m = await sG(SK_MEM);
+              if (m) {
+                try {
+                  const p = JSON.parse(m);
+                  if (Array.isArray(p) && p.length) setReg(p);
+                } catch {}
+              }
+            }
+          } else {
+            // 設定URLがない場合はlocalStorageから読み込む
+            const m = await sG(SK_MEM);
+            if (m) {
+              try {
+                const p = JSON.parse(m);
+                if (Array.isArray(p) && p.length) setReg(p);
+              } catch {}
+            }
+          }
+
+          if (v) {
+            const n = parseInt(v);
+            if (!isNaN(n)) setIntMin(n);
+          }
           setInitDone(true);
         })();
       },[]);
@@ -779,6 +869,23 @@
               <h3 style={{fontSize:18,fontWeight:600,margin:"0 0 16px"}}>設定</h3>
 
               <div style={{padding:"12px 0",borderBottom:"1px solid #e5e7eb"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <div>
+                    <p style={{fontSize:14,fontWeight:600,margin:0}}>📊 設定スプレッドシート</p>
+                    <p style={{fontSize:12,color:"#6b7280",margin:"2px 0 0"}}>全員で共有するメンバー設定</p>
+                  </div>
+                  <button onClick={()=>setShowConfigSetup(true)} style={{...btn1,fontSize:12,padding:"6px 12px"}}>
+                    {configUrl?"変更":"設定"}
+                  </button>
+                </div>
+                {configUrl&&(
+                  <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:6,padding:"8px 12px",marginTop:8}}>
+                    <p style={{fontSize:11,color:"#1e40af",margin:0,wordBreak:"break-all"}}>{configUrl}</p>
+                  </div>
+                )}
+              </div>
+
+              <div style={{padding:"12px 0",borderBottom:"1px solid #e5e7eb"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                   <div>
                     <p style={{fontSize:14,fontWeight:500,margin:0}}>自動更新</p>
@@ -815,6 +922,58 @@
               <div style={{display:"flex",justifyContent:"flex-end",marginTop:20,gap:8}}>
                 <button onClick={()=>setShowSetup(true)} style={btn2}>セットアップ手順</button>
                 <button onClick={()=>setShowSettings(false)} style={btn1}>閉じる</button>
+              </div>
+            </Modal>
+          )}
+
+          {/* CONFIG SETUP */}
+          {showConfigSetup&&(
+            <Modal onClose={()=>setShowConfigSetup(false)}>
+              <h3 style={{fontSize:18,fontWeight:600,margin:"0 0 16px"}}>📊 設定スプレッドシート</h3>
+              <p style={{fontSize:13,color:"#6b7280",margin:"0 0 16px"}}>
+                メンバー設定を管理するスプレッドシートのCSV公開URLを入力してください。
+                これを設定すると、全員が同じデータを見れるようになります。
+              </p>
+              <label style={lb}>設定スプレッドシート CSV URL</label>
+              <input
+                type="text"
+                value={configUrl}
+                onChange={e=>setConfigUrl(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/e/2PACX-..."
+                style={inp}
+              />
+              <div style={{background:"#fef3c7",border:"1px solid #fde68a",borderRadius:6,padding:"12px",marginTop:12}}>
+                <p style={{fontSize:12,color:"#92400e",margin:"0 0 4px",fontWeight:600}}>💡 設定方法</p>
+                <p style={{fontSize:11,color:"#78350f",margin:0}}>
+                  1. 新しいスプレッドシートを作成<br/>
+                  2. 1列目にメンバー名、2列目以降に月（2026-03形式）<br/>
+                  3. ファイル→共有→ウェブに公開→CSV形式で公開<br/>
+                  4. 公開URLをここに貼り付け
+                </p>
+              </div>
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:20,gap:8}}>
+                <button onClick={()=>setShowConfigSetup(false)} style={btn2}>キャンセル</button>
+                <button onClick={async()=>{
+                  if(!configUrl.trim()){
+                    alert('URLを入力してください');
+                    return;
+                  }
+                  try{
+                    await sS(SK_CONFIG,configUrl);
+                    const members=await loadConfigSpreadsheet(configUrl);
+                    if(members&&members.length>0){
+                      setReg(members);
+                      await sS(SK_MEM,JSON.stringify(members));
+                      alert(`✅ 設定完了！${members.length}名のメンバーを読み込みました`);
+                      setShowConfigSetup(false);
+                      fetchAll();
+                    }else{
+                      alert('メンバーデータが見つかりませんでした');
+                    }
+                  }catch(error){
+                    alert(`エラー: ${error.message}`);
+                  }
+                }} style={btn1}>保存して読み込む</button>
               </div>
             </Modal>
           )}
