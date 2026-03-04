@@ -35,6 +35,7 @@
     const SK_MEM = "profit-ranking-members-csv";
     const SK_INT = "profit-ranking-interval";
     const SK_CONFIG = "profit-ranking-config-url";
+    const DEFAULT_CONFIG_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSVvalqnmem5wibPEgeAyQIDlV6lpdMpPjrK2qP9_9R2VNWlGg5CVROmDD05mmZuqMxrErn2SeCOinf/pub?gid=0&single=true&output=csv";
 
     const DEFAULT_MEMBERS = [
       { name:"加藤", sheets:{} },
@@ -305,14 +306,19 @@
           const configUrlStored = await sG(SK_CONFIG);
           const v = await sG(SK_INT);
 
-          if (configUrlStored) {
-            setConfigUrl(configUrlStored);
+          // デフォルトURLまたは保存されたURLを使用
+          const urlToUse = configUrlStored || DEFAULT_CONFIG_URL;
+          setConfigUrl(urlToUse);
+
+          // デフォルトURLを使う場合はlocalStorageに保存
+          if (!configUrlStored && DEFAULT_CONFIG_URL) {
+            await sS(SK_CONFIG, DEFAULT_CONFIG_URL);
           }
 
           // 設定スプレッドシートから読み込む
-          if (configUrlStored) {
+          if (urlToUse) {
             try {
-              const members = await loadConfigSpreadsheet(configUrlStored);
+              const members = await loadConfigSpreadsheet(urlToUse);
               if (members && members.length > 0) {
                 setReg(members);
                 await sS(SK_MEM, JSON.stringify(members)); // localStorageにもバックアップ
@@ -327,15 +333,6 @@
                   if (Array.isArray(p) && p.length) setReg(p);
                 } catch {}
               }
-            }
-          } else {
-            // 設定URLがない場合はlocalStorageから読み込む
-            const m = await sG(SK_MEM);
-            if (m) {
-              try {
-                const p = JSON.parse(m);
-                if (Array.isArray(p) && p.length) setReg(p);
-              } catch {}
             }
           }
 
