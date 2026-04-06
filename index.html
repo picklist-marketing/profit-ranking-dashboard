@@ -435,6 +435,12 @@
 
       useEffect(()=>{regRef.current=reg;},[reg]);
       useEffect(()=>{intRef.current=intMin;},[intMin]);
+      useEffect(()=>{
+        if(kpiWeeks.length===0) return;
+        const todayStr=`${new Date().getMonth()+1}/${new Date().getDate()}`;
+        const idx=kpiWeeks.findIndex(w=>dateInRange(todayStr,w.start,w.end));
+        if(idx>=0) setKpiSelWeekIdx(idx);
+      },[kpiWeeks]);
       useEffect(()=>{selMonthRef.current=selMonth;},[selMonth]);
 
       /* ── Init ─── */
