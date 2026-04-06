@@ -23,6 +23,39 @@
     .card-hover:hover { transform: translateY(-2px); box-shadow: 0 12px 24px rgba(0,0,0,.08); }
     .btn-hover { transition: all 0.15s ease; }
     .btn-hover:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(37,99,235,.25); }
+
+    @keyframes seg-glow-green {
+      0%, 100% { filter: brightness(1) drop-shadow(0 0 2px rgba(16,185,129,.6)); }
+      50%       { filter: brightness(1.3) drop-shadow(0 0 10px rgba(16,185,129,1)); }
+    }
+    @keyframes seg-glow-purple {
+      0%, 100% { filter: brightness(1) drop-shadow(0 0 2px rgba(139,92,246,.6)); }
+      50%       { filter: brightness(1.3) drop-shadow(0 0 10px rgba(139,92,246,1)); }
+    }
+    .seg-achieved-green  { animation: seg-glow-green  1.8s ease-in-out infinite; }
+    .seg-achieved-purple { animation: seg-glow-purple 1.8s ease-in-out infinite; }
+
+    @keyframes seg-glow-gold {
+      0%, 100% { filter: brightness(1)    drop-shadow(0 0 3px rgba(245,158,11,.7)); }
+      50%       { filter: brightness(1.3) drop-shadow(0 0 12px rgba(253,230,138,1)); }
+    }
+    .seg-achieved-gold { animation: seg-glow-gold 1.8s ease-in-out infinite; }
+
+    @keyframes sparkle-up {
+      0%   { transform: translateY(0) scale(0) rotate(0deg);   opacity: 0; }
+      35%  { transform: translateY(-12px) scale(1.5) rotate(90deg);  opacity: 1; }
+      100% { transform: translateY(-32px) scale(0.4) rotate(240deg); opacity: 0; }
+    }
+    @keyframes confetti-fall {
+      0%   { transform: translateY(-2px) rotate(0deg);   opacity: 0; }
+      12%  { opacity: 1; }
+      100% { transform: translateY(38px) rotate(440deg); opacity: 0; }
+    }
+    @keyframes badge-pop {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.1); }
+    }
+    .badge-achieved { animation: badge-pop 1.8s ease-in-out infinite; display: inline-block; }
   </style>
 </head>
 <body>
@@ -35,6 +68,8 @@
     const SK_MEM = "profit-ranking-members-csv";
     const SK_INT = "profit-ranking-interval";
     const SK_CONFIG = "profit-ranking-config-url";
+    const SK_KPI = "profit-ranking-kpi";
+    const SK_WEEKS = "profit-ranking-weeks";
     const DEFAULT_CONFIG_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSVvalqnmem5wibPEgeAyQIDlV6lpdMpPjrK2qP9_9R2VNWlGg5CVROmDD05mmZuqMxrErn2SeCOinf/pub?gid=0&single=true&output=csv";
 
     const DEFAULT_MEMBERS = [
@@ -50,10 +85,96 @@
     function fF(v){if(v===0)return"¥0";return`${v<0?"-":""}¥${Math.abs(Math.round(v)).toLocaleString()}`;}
     function dS(a,b){const[am,ad]=a.split("/").map(Number);const[bm,bd]=b.split("/").map(Number);return am!==bm?am-bm:ad-bd;}
     function tS(d){return d?`${d.getHours()}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`:"--:--";}
+    function dateInRange(date,start,end){if(!start||!end)return false;const[dm,dd]=date.split("/").map(Number);const[sm,sd]=start.split("/").map(Number);const[em,ed]=end.split("/").map(Number);const d=dm*100+dd,s=sm*100+sd,e=em*100+ed;return d>=s&&d<=e;}
     async function sG(k){try{const r=localStorage.getItem(k);return r||null;}catch{return null;}}
     async function sS(k,v){try{localStorage.setItem(k,typeof v==="string"?v:JSON.stringify(v));}catch{}}
+
+    const KV_KEYS=["profit-ranking-kpi","profit-ranking-weeks"];
+    async function kvGet(k){
+      try{
+        const r=await fetch(`/api/kv?key=${k}`);
+        if(!r.ok)throw new Error(`HTTP ${r.status}`);
+        return await r.json();
+      }catch(e){
+        console.warn('[KV] GET failed, using localStorage:', e);
+        const local=localStorage.getItem(k);
+        return local?JSON.parse(local):null;
+      }
+    }
+    async function kvSet(k,v){
+      try{
+        const r=await fetch(`/api/kv?key=${k}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(v)});
+        if(!r.ok)throw new Error(`HTTP ${r.status}`);
+        console.log('[KV] SET ok:', k);
+      }catch(e){
+        console.error('[KV] SET failed:', k, e);
+      }
+      try{localStorage.setItem(k,JSON.stringify(v));}catch{}
+    }
     function getCurrentMonth(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;}
     function formatMonth(ym){const[y,m]=ym.split('-');return`${y}年${m}月`;}
+
+    /* ═══ ArrowBar ═══ */
+    function ChevronBar({rate, type="monthly"}) {
+      if(rate===null||rate===undefined) return <div style={{height:20}}/>;
+      const h=20, tip=10;
+      const pct=Math.max(0,Math.min(rate,100));
+      const achieved=rate>=100;
+      const bg=achieved
+        ?"linear-gradient(90deg,#b45309,#f59e0b,#fde68a,#f59e0b,#b45309)"
+        :pct>=70?"linear-gradient(90deg,#d97706,#f59e0b)"
+        :"linear-gradient(90deg,#dc2626,#ef4444)";
+      const achCls=achieved?"seg-achieved-gold":"";
+      const sparkles=achieved?[
+        {left:"6%",  delay:"0s",    color:"#fbbf24", char:"✦"},
+        {left:"20%", delay:"0.55s", color:"#f472b6", char:"★"},
+        {left:"37%", delay:"1.1s",  color:"#60a5fa", char:"✦"},
+        {left:"54%", delay:"0.3s",  color:"#4ade80", char:"★"},
+        {left:"70%", delay:"0.85s", color:"#a78bfa", char:"✦"},
+        {left:"88%", delay:"1.4s",  color:"#fb923c", char:"★"},
+      ]:[];
+      const confetti=achieved?[
+        {left:"4%",  color:"#fbbf24", delay:"0s",    w:6, h:5, round:false},
+        {left:"15%", color:"#f472b6", delay:"0.4s",  w:5, h:7, round:true},
+        {left:"28%", color:"#60a5fa", delay:"0.75s", w:7, h:4, round:false},
+        {left:"44%", color:"#34d399", delay:"0.2s",  w:5, h:6, round:true},
+        {left:"60%", color:"#a78bfa", delay:"1.0s",  w:6, h:5, round:false},
+        {left:"74%", color:"#fb923c", delay:"0.6s",  w:5, h:7, round:true},
+        {left:"88%", color:"#e879f9", delay:"1.3s",  w:7, h:4, round:false},
+      ]:[];
+      return(
+        <div style={{position:"relative",overflow:"visible"}}>
+          {confetti.map((p,i)=>(
+            <div key={"c"+i} style={{
+              position:"absolute",left:p.left,top:1,
+              width:p.w,height:p.h,background:p.color,
+              borderRadius:p.round?999:2,
+              animation:`confetti-fall 2s ${p.delay} ease-in infinite`,
+              pointerEvents:"none",zIndex:5
+            }}/>
+          ))}
+          <div style={{background:"linear-gradient(180deg,#d1d5db,#e5e7eb)",borderRadius:4,height:h,position:"relative",overflow:"hidden",boxShadow:"inset 0 1px 3px rgba(0,0,0,.1)"}}>
+            {pct>0&&(
+              <div className={achCls} style={{
+                position:"absolute",left:0,top:0,height:"100%",
+                width:`${pct}%`,minWidth:tip+4,
+                background:bg,
+                clipPath:`polygon(0 0,calc(100% - ${tip}px) 0,100% 50%,calc(100% - ${tip}px) 100%,0 100%)`,
+                transition:"width .5s ease"
+              }}/>
+            )}
+          </div>
+          {sparkles.map((s,i)=>(
+            <span key={"s"+i} style={{
+              position:"absolute",left:s.left,top:h-2,
+              fontSize:9,color:s.color,lineHeight:1,
+              animation:`sparkle-up 1.9s ${s.delay} ease-out infinite`,
+              pointerEvents:"none",zIndex:5
+            }}>{s.char}</span>
+          ))}
+        </div>
+      );
+    }
 
     /* ═══ CSV Parser ═══ */
     function parseCSV(text) {
@@ -285,12 +406,28 @@
       const [lastUp, setLastUp] = useState(null);
       const [expandedMembers, setExpandedMembers] = useState({});
       const [autoRef, setAutoRef] = useState(true);
-      const [intMin, setIntMin] = useState(30);
+      const [intMin, setIntMin] = useState(15);
       const [initDone, setInitDone] = useState(false);
       const [monthUrls, setMonthUrls] = useState({});
       const [newMonthYM, setNewMonthYM] = useState(getCurrentMonth());
       const [configUrl, setConfigUrl] = useState("");
       const [showConfigSetup, setShowConfigSetup] = useState(false);
+      const [kpiTargets, setKpiTargets] = useState({});
+      const [mode, setMode] = useState("ranking");
+      const [autoSlide, setAutoSlide] = useState(false);
+      const [kpiEditMember, setKpiEditMember] = useState(null);
+      const [kpiEditVal, setKpiEditVal] = useState("");
+      const [kpiEditWeekVal, setKpiEditWeekVal] = useState("");
+      const [editingWT, setEditingWT] = useState(null);
+      const [editingWTVal, setEditingWTVal] = useState("");
+      const [kpiWeeks, setKpiWeeks] = useState([]);
+      const [kpiSelWeekIdx, setKpiSelWeekIdx] = useState(0);
+      const [showWeekAdd, setShowWeekAdd] = useState(false);
+      const [showWeekDetail, setShowWeekDetail] = useState(false);
+      const [selKpiMember, setSelKpiMember] = useState(null);
+      const kpiDetailRef = useRef(null);
+      const [weekAddStart, setWeekAddStart] = useState("");
+      const [weekAddEnd, setWeekAddEnd] = useState("");
       const iRef = useRef(null);
       const regRef = useRef(reg);
       const intRef = useRef(intMin);
@@ -341,7 +478,21 @@
             if (!isNaN(n)) setIntMin(n);
           } else {
             // デフォルト値を保存
-            await sS(SK_INT, '30');
+            await sS(SK_INT, '15');
+          }
+          const kpi = await kvGet(SK_KPI);
+          if (kpi) {
+            try { setKpiTargets(typeof kpi==="string"?JSON.parse(kpi):kpi); } catch {}
+          } else {
+            const local=localStorage.getItem(SK_KPI);
+            if(local){try{const p=JSON.parse(local);setKpiTargets(p);await kvSet(SK_KPI,p);}catch{}}
+          }
+          const wr = await kvGet(SK_WEEKS);
+          if (wr) {
+            try { const parsed=typeof wr==="string"?JSON.parse(wr):wr; if(Array.isArray(parsed))setKpiWeeks(parsed); } catch {}
+          } else {
+            const local=localStorage.getItem(SK_WEEKS);
+            if(local){try{const p=JSON.parse(local);if(Array.isArray(p)){setKpiWeeks(p);await kvSet(SK_WEEKS,p);}}catch{}}
           }
           setInitDone(true);
         })();
@@ -526,6 +677,91 @@
         setExpandedMembers(prev=>({...prev,[key]:!prev[key]}));
       };
 
+      const saveKpi = async(targets)=>{ setKpiTargets(targets); await kvSet(SK_KPI,targets); };
+      const saveWeekTarget = async(memberName,weekKey,val)=>{
+        const cur=kpiTargets[memberName]||{};
+        await saveKpi({...kpiTargets,[memberName]:{...cur,weeks:{...(cur.weeks||{}),[weekKey]:val}}});
+      };
+      const saveWeeks = async(weeks)=>{ setKpiWeeks(weeks); await kvSet(SK_WEEKS,weeks); };
+
+      useEffect(()=>{
+        if(selKpiMember&&kpiDetailRef.current){
+          setTimeout(()=>kpiDetailRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),50);
+        }
+      },[selKpiMember]);
+
+      useEffect(()=>{
+        if(!autoSlide) return;
+        const id=setInterval(()=>{
+          setMode(m=>m==="ranking"?"kpi":"ranking");
+          window.scrollTo({top:0,behavior:"smooth"});
+        },30000);
+        return ()=>clearInterval(id);
+      },[autoSlide]);
+
+      function generateWeeksForMonth(yearMonth){
+        const[year,month]=yearMonth.split("-").map(Number);
+        const first=new Date(year,month-1,1);
+        const last=new Date(year,month,0);
+        const weeks=[];let cur=new Date(first);
+        while(cur<=last){
+          const start=`${cur.getMonth()+1}/${cur.getDate()}`;
+          let end=new Date(cur);
+          while(end.getDay()!==0&&end<last)end.setDate(end.getDate()+1);
+          if(end>last)end=new Date(last);
+          weeks.push({start,end:`${end.getMonth()+1}/${end.getDate()}`});
+          cur=new Date(end);cur.setDate(cur.getDate()+1);
+        }
+        return weeks;
+      }
+
+      function addNextWeek(weeks,yearMonth){
+        const[year,month]=yearMonth.split("-").map(Number);
+        const last=new Date(year,month,0);
+        if(weeks.length===0)return generateWeeksForMonth(yearMonth).slice(0,1);
+        const prev=weeks[weeks.length-1];
+        const[em,ed]=prev.end.split("/").map(Number);
+        const yr=new Date().getFullYear();
+        const nextMon=new Date(yr,em-1,ed+1);
+        if(nextMon>last)return weeks;
+        let nextSun=new Date(nextMon);
+        while(nextSun.getDay()!==0&&nextSun<last)nextSun.setDate(nextSun.getDate()+1);
+        if(nextSun>last)nextSun=new Date(last);
+        return[...weeks,{start:`${nextMon.getMonth()+1}/${nextMon.getDate()}`,end:`${nextSun.getMonth()+1}/${nextSun.getDate()}`}];
+      }
+
+      const weekDates = useMemo(()=>{
+        const today=new Date();
+        const dow=today.getDay();
+        const mon=new Date(today);
+        mon.setDate(today.getDate()-(dow===0?6:dow-1));
+        const dates=[];
+        for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);dates.push(`${d.getMonth()+1}/${d.getDate()}`);}
+        return dates;
+      },[]);
+
+      const kpiData = useMemo(()=>{
+        const todayStr=`${new Date().getMonth()+1}/${new Date().getDate()}`;
+        return rData.map(r=>{
+          const target=(kpiTargets[r.name]?.monthly)||0;
+          const mem=members.find(m=>m.name===r.name);
+          const rate=target>0?Math.min((r.monthTotal/target)*100,999):null;
+          const weekData=kpiWeeks.map(w=>{
+            const key=`${w.start}~${w.end}`;
+            const wTarget=(kpiTargets[r.name]?.weeks?.[key])||0;
+            const profit=mem?allDates.filter(d=>dateInRange(d,w.start,w.end)).reduce((s,d)=>s+mem.projects.reduce((ps,p)=>ps+(p.daily[d]||0),0),0):0;
+            const wRate=wTarget>0?Math.min(profit/wTarget*100,999):null;
+            const[em,ed]=w.end.split("/").map(Number);
+            const[tm,td]=todayStr.split("/").map(Number);
+            const isPast=em*100+ed<tm*100+td;
+            const isCurrent=dateInRange(todayStr,w.start,w.end);
+            return{key,...w,profit,target:wTarget,rate:wRate,isPast,isCurrent};
+          });
+          const selWD=weekData[kpiSelWeekIdx]||null;
+          return{...r,target,rate,weekData,selWD};
+        });
+      },[rData,kpiTargets,kpiWeeks,kpiSelWeekIdx,members,allDates]);
+
       /* ═══ RENDER ═══ */
       return(
         <div style={{minHeight:"100vh",background:"#f8f9fa"}}>
@@ -544,6 +780,15 @@
                 <div>
                   <h1 style={{fontSize:26,fontWeight:700,margin:0,color:"#111827",letterSpacing:"-0.02em"}}>粗利ランキング</h1>
                   {lastUp&&<p style={{fontSize:13,color:"#6b7280",margin:"6px 0 0",fontWeight:500}}>最終更新: {tS(lastUp)}</p>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{display:"flex",background:"#f3f4f6",borderRadius:10,padding:4,gap:2}}>
+                    <button onClick={()=>setMode("ranking")} style={{padding:"8px 20px",fontSize:14,fontWeight:600,border:"none",borderRadius:8,cursor:"pointer",background:mode==="ranking"?"white":"transparent",color:mode==="ranking"?"#111827":"#6b7280",boxShadow:mode==="ranking"?"0 1px 4px rgba(0,0,0,.1)":"none",transition:"all .15s"}}>ランキング</button>
+                    <button onClick={()=>setMode("kpi")} style={{padding:"8px 20px",fontSize:14,fontWeight:600,border:"none",borderRadius:8,cursor:"pointer",background:mode==="kpi"?"white":"transparent",color:mode==="kpi"?"#7c3aed":"#6b7280",boxShadow:mode==="kpi"?"0 1px 4px rgba(0,0,0,.1)":"none",transition:"all .15s"}}>KPI管理</button>
+                  </div>
+                  <button onClick={()=>setAutoSlide(v=>!v)} style={{display:"flex",alignItems:"center",gap:5,padding:"8px 14px",fontSize:12,fontWeight:700,border:"none",borderRadius:8,cursor:"pointer",background:autoSlide?"#7c3aed":"#e5e7eb",color:autoSlide?"white":"#6b7280",transition:"all .2s",whiteSpace:"nowrap"}}>
+                    {autoSlide?"⏸ 自動切替中":"▶ 自動切替"}
+                  </button>
                 </div>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -608,7 +853,8 @@
             )}
 
             {!loading&&members.length>0&&(<>
-              {/* SUMMARY */}
+              {/* SUMMARY — ランキングモードのみ */}
+              {mode==="ranking"&&<>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,marginBottom:32,maxWidth:800}}>
                 <Card>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
@@ -820,8 +1066,238 @@
                   })}
                 </div>
               )}
+              </>}
+              {mode==="kpi"&&(
+                <div>
+                  {/* チームサマリー */}
+                  {(()=>{
+                    const selWeekLabel=kpiWeeks[kpiSelWeekIdx]?`${kpiWeeks[kpiSelWeekIdx].start}〜${kpiWeeks[kpiSelWeekIdx].end}`:"";
+                    const weekAchieved=kpiData.filter(r=>r.selWD?.rate!==null&&r.selWD?.rate>=100).length;
+                    const weekHasTarget=kpiData.filter(r=>(r.selWD?.target||0)>0).length;
+                    return(
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
+                      <Card>
+                        <p style={{fontSize:12,color:"#6b7280",fontWeight:600,margin:"0 0 6px"}}>チーム月間合計</p>
+                        <p style={{fontSize:24,fontWeight:700,color:"#059669",margin:0}}>{fF(tMon)}</p>
+                      </Card>
+                      <Card>
+                        <p style={{fontSize:12,color:"#6b7280",fontWeight:600,margin:"0 0 6px"}}>チーム月間目標</p>
+                        <p style={{fontSize:24,fontWeight:700,color:"#111827",margin:0}}>{fF(kpiData.reduce((s,r)=>s+r.target,0))}</p>
+                      </Card>
+                      <Card>
+                        <p style={{fontSize:12,color:"#6b7280",fontWeight:600,margin:"0 0 6px"}}>月間KPI達成</p>
+                        <p style={{fontSize:24,fontWeight:700,color:"#2563eb",margin:0}}>{kpiData.filter(r=>r.rate!==null&&r.rate>=100).length}<span style={{fontSize:14,color:"#6b7280",fontWeight:400}}> / {kpiData.filter(r=>r.target>0).length}名</span></p>
+                      </Card>
+                      <Card>
+                        <p style={{fontSize:12,color:"#6b7280",fontWeight:600,margin:"0 0 6px"}}>週間KPI達成{selWeekLabel&&<span style={{fontWeight:400,color:"#9ca3af",marginLeft:4}}>({selWeekLabel})</span>}</p>
+                        <p style={{fontSize:24,fontWeight:700,color:"#7c3aed",margin:0}}>{weekAchieved}<span style={{fontSize:14,color:"#6b7280",fontWeight:400}}> / {weekHasTarget}名</span></p>
+                      </Card>
+                    </div>
+                  );})()}
+
+                  {/* 週間セレクター */}
+                  <div style={{marginBottom:20,background:"white",border:"1px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>
+                    <button onClick={()=>setShowWeekDetail(v=>!v)} style={{display:"flex",alignItems:"center",width:"100%",padding:"10px 16px",background:"none",border:"none",cursor:"pointer",gap:8}}>
+                      <span style={{fontSize:12,fontWeight:600,color:"#6b7280"}}>週間：</span>
+                      {kpiWeeks.length>0&&<span style={{fontSize:12,color:"#7c3aed",fontWeight:600}}>{kpiWeeks[kpiSelWeekIdx]?.start}〜{kpiWeeks[kpiSelWeekIdx]?.end} 選択中</span>}
+                      {kpiWeeks.length===0&&<span style={{fontSize:12,color:"#9ca3af"}}>週を生成してください</span>}
+                      <span style={{marginLeft:"auto",fontSize:11,color:"#9ca3af"}}>{showWeekDetail?"▲":"▼"}</span>
+                    </button>
+                    {showWeekDetail&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"0 16px 12px",flexWrap:"wrap",borderTop:"1px solid #f3f4f6"}}>
+                      {kpiWeeks.map((w,idx)=>(
+                        <div key={idx} style={{display:"flex",alignItems:"center",gap:0}}>
+                          <button onClick={()=>setKpiSelWeekIdx(idx)} style={{background:kpiSelWeekIdx===idx?"#7c3aed":"#f3f4f6",color:kpiSelWeekIdx===idx?"white":"#374151",border:"none",borderRadius:"6px 0 0 6px",padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                            {w.start}〜{w.end}
+                          </button>
+                          <button onClick={async()=>{const nw=kpiWeeks.filter((_,i)=>i!==idx);await saveWeeks(nw);setKpiSelWeekIdx(Math.min(kpiSelWeekIdx,Math.max(0,nw.length-1)));}} style={{background:kpiSelWeekIdx===idx?"#6d28d9":"#e5e7eb",color:kpiSelWeekIdx===idx?"white":"#9ca3af",border:"none",borderRadius:"0 6px 6px 0",padding:"5px 7px",fontSize:11,cursor:"pointer",lineHeight:1}}>×</button>
+                        </div>
+                      ))}
+                      <button onClick={async()=>{const nw=addNextWeek(kpiWeeks,selMonth);await saveWeeks(nw);setKpiSelWeekIdx(nw.length-1);}} style={{background:"#ede9fe",color:"#7c3aed",border:"none",borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>+ 次の週</button>
+                      <button onClick={async()=>{const nw=generateWeeksForMonth(selMonth);await saveWeeks(nw);setKpiSelWeekIdx(0);}} style={{background:"#f3f4f6",color:"#374151",border:"none",borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>今月を自動生成</button>
+                    </div>}
+                  </div>
+
+                  {/* 概要テーブル */}
+                  {(()=>{
+                    const todayStr=`${new Date().getMonth()+1}/${new Date().getDate()}`;
+                    return(
+                    <div style={{background:"white",border:"1px solid #e5e7eb",borderRadius:12,overflow:"hidden",marginBottom:24,boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
+                      {/* ヘッダー */}
+                      <div style={{display:"grid",gridTemplateColumns:"160px 1fr 1fr 90px",gap:0,background:"#f9fafb",borderBottom:"1px solid #e5e7eb",padding:"10px 20px"}}>
+                        <span style={{fontSize:11,fontWeight:700,color:"#6b7280"}}>メンバー</span>
+                        <span style={{fontSize:11,fontWeight:700,color:"#2563eb",paddingLeft:8}}>月間KPI</span>
+                        <span style={{fontSize:11,fontWeight:700,color:"#7c3aed",paddingLeft:8}}>
+                          {kpiWeeks[kpiSelWeekIdx]?`${kpiWeeks[kpiSelWeekIdx].start}〜${kpiWeeks[kpiSelWeekIdx].end}`:"週間KPI"}
+                        </span>
+                        <span style={{fontSize:11,fontWeight:700,color:"#6b7280",textAlign:"right"}}>前日</span>
+                      </div>
+                      {kpiData.map((r,i)=>{
+                        const monthColor=r.rate===null?"#9ca3af":r.rate>=100?"#b45309":r.rate>=70?"#f59e0b":"#dc2626";
+                        const selW=r.selWD;
+                        const wc=!selW||selW.rate===null?"#9ca3af":selW.rate>=100?"#b45309":selW.rate>=70?"#f59e0b":"#dc2626";
+                        return(
+                          <div key={r.name} style={{display:"grid",gridTemplateColumns:"160px 1fr 1fr 90px",gap:0,padding:"12px 20px",borderBottom:i<kpiData.length-1?"1px solid #f3f4f6":"none",alignItems:"center",background:i%2===0?"white":"#fafafa"}}>
+                            {/* 名前 */}
+                            <div onClick={()=>setSelKpiMember(v=>v===r.name?null:r.name)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                              <div style={{width:28,height:28,borderRadius:7,background:r.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"white",flexShrink:0}}>{r.name[0]}</div>
+                              <span style={{fontSize:13,fontWeight:600,color:selKpiMember===r.name?"#7c3aed":"#111827",textDecoration:selKpiMember===r.name?"underline":"none"}}>{r.name}</span>
+                              <span style={{fontSize:10,color:"#9ca3af"}}>{selKpiMember===r.name?"▲":"▼"}</span>
+                            </div>
+                            {/* 月間 */}
+                            <div style={{paddingLeft:8,paddingRight:16}}>
+                              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                                <span style={{fontSize:12,color:"#374151",fontWeight:600}}>{fY(r.monthTotal)}{r.target>0&&<span style={{color:"#9ca3af",fontWeight:400}}> / {fY(r.target)}</span>}</span>
+                                {r.rate!==null
+                                  ?<span className={r.rate>=100?"badge-achieved":""} style={{fontSize:16,fontWeight:900,color:monthColor,background:monthColor+"18",padding:"2px 8px",borderRadius:6,letterSpacing:"-0.03em"}}>{r.rate.toFixed(0)}%</span>
+                                  :<span style={{fontSize:11,color:"#d1d5db"}}>—</span>}
+                              </div>
+                              {r.target>0?<ChevronBar rate={r.rate} type="monthly"/>:<div style={{height:20}}/>}
+                            </div>
+                            {/* 選択週 */}
+                            <div style={{paddingLeft:8,paddingRight:16}}>
+                              {selW?(
+                                <>
+                                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                                    <span style={{fontSize:12,color:"#374151",fontWeight:600}}>{fY(selW.profit)}{selW.target>0&&<span style={{color:"#9ca3af",fontWeight:400}}> / {fY(selW.target)}</span>}</span>
+                                    {selW.rate!==null
+                                      ?<span className={selW.rate>=100?"badge-achieved":""} style={{fontSize:16,fontWeight:900,color:wc,background:wc+"18",padding:"2px 8px",borderRadius:6,letterSpacing:"-0.03em"}}>{selW.rate.toFixed(0)}%</span>
+                                      :<span style={{fontSize:11,color:"#d1d5db"}}>—</span>}
+                                  </div>
+                                  {selW.target>0?<ChevronBar rate={selW.rate} type="weekly"/>:<div style={{height:20}}/>}
+                                </>
+                              ):<span style={{fontSize:11,color:"#d1d5db"}}>週未設定</span>}
+                            </div>
+                            {/* 前日 */}
+                            <div style={{textAlign:"right"}}>
+                              <span style={{fontSize:13,fontWeight:700,color:r.yesterdayProfit>0?"#059669":r.yesterdayProfit<0?"#dc2626":"#9ca3af"}}>{fY(r.yesterdayProfit)}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );})()}
+
+                  {/* メンバー詳細（選択時のみ表示） */}
+                  <div ref={kpiDetailRef} style={{display:"flex",flexDirection:"column",gap:16}}>
+                    {kpiData.filter(r=>r.name===selKpiMember).map((r,i)=>{
+                      const monthColor=r.rate===null?"#9ca3af":r.rate>=100?"#b45309":r.rate>=70?"#f59e0b":"#dc2626";
+                      return(
+                      <Card key={r.name}>
+                        {/* ヘッダー */}
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                          <div style={{display:"flex",alignItems:"center",gap:10}}>
+                            <div style={{width:36,height:36,borderRadius:9,background:r.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:"white",boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>{r.name[0]}</div>
+                            <div>
+                              <span style={{fontSize:15,fontWeight:700,color:"#111827"}}>{r.name}</span>
+                              <div style={{display:"flex",gap:4,marginTop:2}}>
+                                {r.rate!==null&&r.rate>=100&&<span style={{background:"linear-gradient(90deg,#b45309,#f59e0b,#fde68a)",color:"white",fontSize:10,fontWeight:800,padding:"3px 8px",borderRadius:999,boxShadow:"0 2px 8px rgba(180,83,9,.5)",letterSpacing:"0.03em"}}>✦ 月間達成</span>}
+                              </div>
+                            </div>
+                          </div>
+                          <button onClick={()=>{setKpiEditMember(r.name);setKpiEditVal(r.target>0?String(r.target):"");}} style={{background:"#f3f4f6",border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,fontWeight:600,cursor:"pointer",color:"#374151"}}>月間目標</button>
+                        </div>
+
+                        {/* 月間KPIバー */}
+                        <div style={{marginBottom:14,background:"#f9fafb",borderRadius:8,padding:"10px 12px"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                            <span style={{fontSize:11,color:"#6b7280",fontWeight:600}}>月間: {fY(r.monthTotal)} {r.target>0&&<span style={{color:"#9ca3af"}}>/ {fY(r.target)}</span>}</span>
+                            {r.target>0?<span className={r.rate>=100?"badge-achieved":""} style={{fontSize:20,fontWeight:900,color:monthColor,background:monthColor+"18",padding:"3px 10px",borderRadius:8,letterSpacing:"-0.03em"}}>{r.rate.toFixed(0)}%</span>:<span style={{fontSize:11,color:"#d1d5db"}}>目標未設定</span>}
+                          </div>
+                          {r.target>0&&<>
+                            <ChevronBar rate={r.rate} type="monthly"/>
+                            <div style={{display:"flex",justifyContent:"flex-end",marginTop:4}}>
+                              <span style={{fontSize:10,fontWeight:600,color:monthColor}}>{r.rate>=100?`超過 +${fY(r.monthTotal-r.target)}`:`残り ${fY(r.target-r.monthTotal)}`}</span>
+                            </div>
+                          </>}
+                        </div>
+
+                        {/* 週間リスト */}
+                        {r.weekData.length>0?(
+                          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                            {r.weekData.map((w,wi)=>{
+                              const wc=w.rate===null?"#9ca3af":w.rate>=100?"#b45309":w.rate>=70?"#f59e0b":"#dc2626";
+                              const barBg=w.rate===null||w.rate<=0?"":w.rate>=100?"linear-gradient(90deg,#7c3aed,#a78bfa)":w.rate>=70?"linear-gradient(90deg,#f59e0b,#fbbf24)":"linear-gradient(90deg,#dc2626,#f87171)";
+                              const isEditing=editingWT?.member===r.name&&editingWT?.weekKey===w.key;
+                              const bg=w.isCurrent?"#f0fdf4":w.isPast?"#f9fafb":"white";
+                              const opacity=w.isPast?0.8:1;
+                              return(
+                                <div key={w.key} style={{background:bg,borderRadius:10,padding:"12px 16px",opacity,border:w.isCurrent?"1.5px solid #86efac":"1px solid #e5e7eb"}}>
+                                  {/* ヘッダー行 */}
+                                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                      {w.isCurrent&&<span style={{background:"#dcfce7",color:"#15803d",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:999}}>今週</span>}
+                                      {w.isPast&&<span style={{background:"#f3f4f6",color:"#9ca3af",fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:999}}>終了</span>}
+                                      <span style={{fontSize:13,fontWeight:w.isCurrent?700:500,color:w.isPast?"#9ca3af":"#374151"}}>{w.start} 〜 {w.end}</span>
+                                    </div>
+                                    {w.rate!==null&&<span className={w.rate>=100?"badge-achieved":""} style={{fontSize:20,fontWeight:900,color:wc,background:wc+"18",padding:"3px 10px",borderRadius:8,letterSpacing:"-0.03em"}}>{w.rate.toFixed(0)}%</span>}
+                                  </div>
+
+                                  {/* 実績 / 目標 */}
+                                  <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:8}}>
+                                    <span style={{fontSize:20,fontWeight:700,color:w.profit>0?(w.isPast?"#6b7280":"#111827"):"#d1d5db"}}>{fY(w.profit)}</span>
+                                    {w.target>0&&<span style={{fontSize:13,color:"#9ca3af"}}>/ {fY(w.target)}</span>}
+                                    {w.rate!==null&&w.rate>=100&&<span style={{fontSize:11,fontWeight:700,color:"#7c3aed",marginLeft:4}}>+{fY(w.profit-w.target)} 超過</span>}
+                                    {w.rate!==null&&w.rate<100&&<span style={{fontSize:11,color:"#9ca3af",marginLeft:4}}>残り {fY(w.target-w.profit)}</span>}
+                                  </div>
+
+                                  {/* プログレスバー */}
+                                  <div style={{marginBottom:8}}>
+                                    {w.target>0?<ChevronBar rate={w.rate} type="weekly"/>:<div style={{height:20}}/>}
+                                  </div>
+
+                                  {/* 目標設定 */}
+                                  {isEditing?(
+                                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                                      <input autoFocus type="number" value={editingWTVal} onChange={e=>setEditingWTVal(e.target.value)}
+                                        onKeyDown={async e=>{if(e.key==="Enter"){await saveWeekTarget(r.name,w.key,parseInt(editingWTVal)||0);setEditingWT(null);}if(e.key==="Escape")setEditingWT(null);}}
+                                        style={{flex:1,fontSize:13,padding:"5px 10px",border:"1.5px solid #7c3aed",borderRadius:6,outline:"none"}} placeholder="週間目標（円）"/>
+                                      <button onClick={async()=>{await saveWeekTarget(r.name,w.key,parseInt(editingWTVal)||0);setEditingWT(null);}} style={{padding:"5px 14px",background:"#7c3aed",color:"white",border:"none",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600}}>保存</button>
+                                      <button onClick={()=>setEditingWT(null)} style={{padding:"5px 10px",background:"#f3f4f6",border:"none",borderRadius:6,cursor:"pointer",fontSize:12,color:"#6b7280"}}>×</button>
+                                    </div>
+                                  ):(
+                                    <button onClick={()=>{setEditingWT({member:r.name,weekKey:w.key});setEditingWTVal(w.target>0?String(w.target):"");}} style={{fontSize:11,color:w.target>0?"#7c3aed":"#9ca3af",background:"none",border:`1px dashed ${w.target>0?"#c4b5fd":"#d1d5db"}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>
+                                      {w.target>0?`目標を変更: ${fY(w.target)}`:"+ 週間目標を設定"}
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ):(
+                          <div style={{textAlign:"center",padding:"12px",background:"#f9fafb",borderRadius:8,border:"1px dashed #d1d5db"}}>
+                            <p style={{fontSize:12,color:"#9ca3af",margin:0}}>「今月を自動生成」で週を追加してください</p>
+                          </div>
+                        )}
+                      </Card>
+                    );})}
+                  </div>
+                </div>
+              )}
             </>)}
           </main>
+
+          {/* KPI EDIT */}
+          {kpiEditMember&&(
+            <Modal onClose={()=>setKpiEditMember(null)}>
+              <h3 style={{fontSize:18,fontWeight:600,margin:"0 0 4px"}}>{kpiEditMember} — 月間KPI目標</h3>
+              <p style={{fontSize:13,color:"#6b7280",margin:"0 0 20px"}}>月間の粗利目標を設定してください。週間目標は各週のカードから設定できます。</p>
+              <label style={lb}>月間目標（円）</label>
+              <input type="number" value={kpiEditVal} onChange={e=>setKpiEditVal(e.target.value)} placeholder="例: 3000000" style={inp} autoFocus/>
+              {kpiEditVal&&<p style={{fontSize:13,color:"#2563eb",fontWeight:600,marginTop:8}}>{fF(Number(kpiEditVal))}</p>}
+              <div style={{display:"flex",gap:8,marginTop:24,justifyContent:"flex-end"}}>
+                {kpiTargets[kpiEditMember]?.monthly&&<button onClick={async()=>{const cur=kpiTargets[kpiEditMember]||{};await saveKpi({...kpiTargets,[kpiEditMember]:{...cur,monthly:0}});setKpiEditMember(null);}} style={{...btn2,color:"#dc2626",borderColor:"#fecaca"}}>削除</button>}
+                <button onClick={()=>setKpiEditMember(null)} style={btn2}>キャンセル</button>
+                <button onClick={async()=>{
+                  const monthly=parseInt(kpiEditVal)||0;
+                  if(!monthly){alert("目標金額を入力してください");return;}
+                  const cur=kpiTargets[kpiEditMember]||{};
+                  await saveKpi({...kpiTargets,[kpiEditMember]:{...cur,monthly}});
+                  setKpiEditMember(null);
+                }} style={btn1}>保存</button>
+              </div>
+            </Modal>
+          )}
+
 
           {/* ADD MONTH */}
           {showAddMonth&&(
