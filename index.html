@@ -701,7 +701,7 @@
         const id=setInterval(()=>{
           setMode(m=>m==="ranking"?"kpi":"ranking");
           window.scrollTo({top:0,behavior:"smooth"});
-        },30000);
+        },10000);
         return ()=>clearInterval(id);
       },[autoSlide]);
 
