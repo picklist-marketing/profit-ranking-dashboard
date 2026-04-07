@@ -1077,11 +1077,24 @@
                 <div>
                   {/* チームサマリー */}
                   {(()=>{
-                    const selWeekLabel=kpiWeeks[kpiSelWeekIdx]?`${kpiWeeks[kpiSelWeekIdx].start}〜${kpiWeeks[kpiSelWeekIdx].end}`:"";
-                    const weekAchieved=kpiData.filter(r=>r.selWD?.rate!==null&&r.selWD?.rate>=100).length;
-                    const weekHasTarget=kpiData.filter(r=>(r.selWD?.target||0)>0).length;
+                    const TEAMS=[
+                      {name:"チーム加藤", members:["加藤","岸本"]},
+                      {name:"チーム佐藤", members:["佐藤","山口","川崎"]},
+                      {name:"チーム本城", members:["本城","寺窪"]},
+                      {name:"チーム今井", members:["今井"]},
+                      {name:"チームアミナ",members:["アミナ","平高"]},
+                    ];
+                    const teamStats=TEAMS.map(t=>{
+                      const ms=kpiData.filter(r=>t.members.includes(r.name));
+                      const monthly=ms.reduce((s,r)=>s+r.monthTotal,0);
+                      const target=ms.reduce((s,r)=>s+r.target,0);
+                      const weekly=ms.reduce((s,r)=>s+(r.selWD?.profit||0),0);
+                      const rate=target>0?monthly/target*100:null;
+                      return{...t,monthly,target,weekly,rate};
+                    });
                     return(
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:20}}>
+                    <>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:16,marginBottom:12}}>
                       <Card>
                         <p style={{fontSize:12,color:"#6b7280",fontWeight:600,margin:"0 0 6px"}}>チーム月間合計</p>
                         <p style={{fontSize:24,fontWeight:700,color:"#059669",margin:0}}>{fF(tMon)}</p>
@@ -1090,15 +1103,23 @@
                         <p style={{fontSize:12,color:"#6b7280",fontWeight:600,margin:"0 0 6px"}}>チーム月間目標</p>
                         <p style={{fontSize:24,fontWeight:700,color:"#111827",margin:0}}>{fF(kpiData.reduce((s,r)=>s+r.target,0))}</p>
                       </Card>
-                      <Card>
-                        <p style={{fontSize:12,color:"#6b7280",fontWeight:600,margin:"0 0 6px"}}>月間KPI達成</p>
-                        <p style={{fontSize:24,fontWeight:700,color:"#2563eb",margin:0}}>{kpiData.filter(r=>r.rate!==null&&r.rate>=100).length}<span style={{fontSize:14,color:"#6b7280",fontWeight:400}}> / {kpiData.filter(r=>r.target>0).length}名</span></p>
-                      </Card>
-                      <Card>
-                        <p style={{fontSize:12,color:"#6b7280",fontWeight:600,margin:"0 0 6px"}}>週間KPI達成{selWeekLabel&&<span style={{fontWeight:400,color:"#9ca3af",marginLeft:4}}>({selWeekLabel})</span>}</p>
-                        <p style={{fontSize:24,fontWeight:700,color:"#7c3aed",margin:0}}>{weekAchieved}<span style={{fontSize:14,color:"#6b7280",fontWeight:400}}> / {weekHasTarget}名</span></p>
-                      </Card>
                     </div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:20}}>
+                      {teamStats.map(t=>{
+                        const c=t.rate===null?"#6b7280":t.rate>=100?"#b45309":t.rate>=70?"#f59e0b":"#dc2626";
+                        return(
+                        <Card key={t.name}>
+                          <p style={{fontSize:11,color:"#6b7280",fontWeight:700,margin:"0 0 6px"}}>{t.name}</p>
+                          <p style={{fontSize:18,fontWeight:700,color:"#111827",margin:"0 0 2px",letterSpacing:"-0.02em"}}>{fF(t.monthly)}</p>
+                          <p style={{fontSize:11,color:"#9ca3af",margin:"0 0 6px"}}>{t.members.join("・")}</p>
+                          {t.rate!==null
+                            ?<span style={{fontSize:13,fontWeight:800,color:c,background:c+"18",padding:"2px 8px",borderRadius:6}}>{t.rate.toFixed(0)}%</span>
+                            :<span style={{fontSize:11,color:"#d1d5db"}}>目標未設定</span>}
+                        </Card>
+                        );
+                      })}
+                    </div>
+                    </>
                   );})()}
 
                   {/* 週間セレクター */}
