@@ -461,10 +461,25 @@
           // 設定スプレッドシートから読み込む
           if (urlToUse) {
             try {
-              const members = await loadConfigSpreadsheet(urlToUse);
-              if (members && members.length > 0) {
-                setReg(members);
-                await sS(SK_MEM, JSON.stringify(members)); // localStorageにもバックアップ
+              const spreadsheetMembers = await loadConfigSpreadsheet(urlToUse);
+              if (spreadsheetMembers && spreadsheetMembers.length > 0) {
+                // localStorageの手動追加データ（月次URLなど）とマージ
+                const localRaw = localStorage.getItem(SK_MEM);
+                let localMembers = [];
+                try { if (localRaw) localMembers = JSON.parse(localRaw); } catch {}
+
+                const merged = spreadsheetMembers.map(sm => {
+                  const lm = localMembers.find(l => l.name === sm.name);
+                  // localStorageの追加月を保持しつつ、スプレッドシートのURLを優先
+                  return { ...sm, sheets: { ...(lm?.sheets || {}), ...sm.sheets } };
+                });
+                // localStorageにしかないメンバー（手動追加分）も保持
+                for (const lm of localMembers) {
+                  if (!merged.find(m => m.name === lm.name)) merged.push(lm);
+                }
+
+                setReg(merged);
+                await sS(SK_MEM, JSON.stringify(merged));
               }
             } catch (error) {
               console.error('Config load error:', error);
