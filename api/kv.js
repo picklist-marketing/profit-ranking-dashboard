@@ -1,6 +1,6 @@
 import { kv } from '@vercel/kv';
 
-const ALLOWED = ['profit-ranking-kpi', 'profit-ranking-weeks'];
+const ALLOWED = ['profit-ranking-kpi', 'profit-ranking-weeks', 'profit-ranking-members'];
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
