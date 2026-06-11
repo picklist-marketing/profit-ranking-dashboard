@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/send-ranking",
-      "schedule": "0 1 * * 1-5"
+      "schedule": "0 2 * * 1-5"
     }
   ],
   "headers": [
