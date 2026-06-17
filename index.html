@@ -60,6 +60,20 @@
 </head>
 <body>
   <div id="root"></div>
+  <div id="error-display" style="display:none;padding:40px;font-family:monospace;background:#fff0f0;color:#c00;white-space:pre-wrap;font-size:13px;"></div>
+
+  <script>
+    window.onerror = function(msg, src, line, col, err) {
+      var d = document.getElementById('error-display');
+      d.style.display = 'block';
+      d.textContent = 'JS Error:\n' + msg + '\n' + (err ? err.stack : '') + '\nAt: ' + src + ':' + line;
+    };
+    window.addEventListener('unhandledrejection', function(e) {
+      var d = document.getElementById('error-display');
+      d.style.display = 'block';
+      d.textContent = (d.textContent || '') + '\nPromise Error:\n' + (e.reason ? (e.reason.stack || e.reason) : e);
+    });
+  </script>
 
   <script type="text/babel">
     const { useState, useEffect, useCallback, useMemo, useRef } = React;
