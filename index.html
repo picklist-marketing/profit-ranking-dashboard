@@ -459,7 +459,17 @@
           }
 
           // KVから保存済みメンバーデータを読み込む（最も信頼性が高い）
-          const kvMembers = await kvGet(SK_KV_MEM);
+          // 「読込失敗」と「本当に空」を区別する：失敗時はKVへ上書き保存しない（月データ消失防止）
+          let kvReadFailed = false;
+          let kvMembers = null;
+          try {
+            const r = await fetch(`/api/kv?key=${SK_KV_MEM}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            kvMembers = await r.json();
+          } catch (e) {
+            kvReadFailed = true;
+            console.warn('[KV] members read failed — 上書きをスキップします:', e);
+          }
           let savedMembers = null;
           if (kvMembers) {
             try { savedMembers = Array.isArray(kvMembers) ? kvMembers : JSON.parse(kvMembers); } catch {}
@@ -486,8 +496,14 @@
                   if (!merged.find(m => m.name === lm.name)) merged.push(lm);
                 }
                 setReg(merged);
-                await sS(SK_MEM, JSON.stringify(merged));
-                await kvSet(SK_KV_MEM, merged);
+                // KV読込に失敗していた場合、mergedは設定シートのみの縮小データになり得る。
+                // それをKVへ書き戻すと既存の月（5月・6月など）を消すので上書きしない。表示のみ行う。
+                if (kvReadFailed) {
+                  console.warn('[KV] read failed — KV/localStorageへの上書きをスキップ（月データ保護）');
+                } else {
+                  await sS(SK_MEM, JSON.stringify(merged));
+                  await kvSet(SK_KV_MEM, merged);
+                }
               } else if (savedMembers && savedMembers.length > 0) {
                 setReg(savedMembers);
               }
