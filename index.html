@@ -1499,8 +1499,15 @@
                   }
                   try{
                     await sS(SK_CONFIG,configUrl);
-                    const members=await loadConfigSpreadsheet(configUrl);
-                    if(members&&members.length>0){
+                    const sheetMembers=await loadConfigSpreadsheet(configUrl);
+                    if(sheetMembers&&sheetMembers.length>0){
+                      // 既存KVの月を保持しつつ設定シートのURLを上書きマージ（設定シートに無い月＝5月・6月を消さない）
+                      const existing=(await kvGet(SK_KV_MEM))||reg||[];
+                      const members=sheetMembers.map(sm=>{
+                        const ex=existing.find(e=>e.name===sm.name);
+                        return {...sm, sheets:{...(ex?.sheets||{}), ...sm.sheets}};
+                      });
+                      for(const ex of existing){ if(!members.find(m=>m.name===ex.name)) members.push(ex); }
                       setReg(members);
                       await sS(SK_MEM,JSON.stringify(members));
                       await kvSet(SK_KV_MEM,members);
