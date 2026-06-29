@@ -56,6 +56,13 @@
       50%       { transform: scale(1.1); }
     }
     .badge-achieved { animation: badge-pop 1.8s ease-in-out infinite; display: inline-block; }
+
+    /* ── スマホ対応（インラインstyleを!importantで上書き）── */
+    @media (max-width: 768px) {
+      .grid-2 { grid-template-columns: 1fr !important; gap: 16px !important; }
+      .main-pad { padding: 14px !important; }
+      .hdr-wrap { padding-left: 14px !important; padding-right: 14px !important; }
+    }
   </style>
 </head>
 <body>
@@ -810,7 +817,7 @@
           <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
 
           {/* HEADER */}
-          <header style={{background:"white",borderBottom:"1px solid #e5e7eb",padding:"20px 32px",boxShadow:"0 1px 3px rgba(0,0,0,.06)"}}>
+          <header className="hdr-wrap" style={{background:"white",borderBottom:"1px solid #e5e7eb",padding:"20px 32px",boxShadow:"0 1px 3px rgba(0,0,0,.06)"}}>
             <div style={{maxWidth:1280,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",gap:20,flexWrap:"wrap"}}>
               <div style={{display:"flex",alignItems:"center",gap:16}}>
                 <div style={{width:48,height:48,borderRadius:12,background:"linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(37,99,235,.3)"}}>
@@ -843,7 +850,7 @@
             </div>
           </header>
 
-          <main style={{padding:"24px",maxWidth:1280,margin:"0 auto"}}>
+          <main className="main-pad" style={{padding:"24px",maxWidth:1280,margin:"0 auto"}}>
 
             {/* SETUP */}
             {showSetup&&(
@@ -897,7 +904,7 @@
             {!loading&&members.length>0&&(<>
               {/* SUMMARY — ランキングモードのみ */}
               {mode==="ranking"&&<>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,marginBottom:32,maxWidth:800}}>
+              <div className="grid-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,marginBottom:32,maxWidth:800}}>
                 <Card>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
                     <p style={{fontSize:14,color:"#6b7280",fontWeight:600,margin:0}}>前日利益（{yesterdayDate}）</p>
@@ -922,7 +929,7 @@
               </div>
 
               {view==="ranking"&&(
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24}}>
+                <div className="grid-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24}}>
                   <Card>
                     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
                       <div style={{width:10,height:10,borderRadius:"50%",background:"#7c3aed"}}/>
@@ -995,7 +1002,7 @@
               )}
 
               {view==="platform"&&(
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24}}>
+                <div className="grid-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24}}>
                   <Card>
                     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
                       <div style={{width:10,height:10,borderRadius:"50%",background:"#7c3aed"}}/>
