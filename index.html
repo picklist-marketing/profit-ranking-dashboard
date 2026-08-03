@@ -90,6 +90,16 @@
     /* ═══ Helpers ═══ */
     function fY(v){if(v===0)return"¥0";const a=Math.abs(v);const s=a>=10000?`¥${(a/10000).toFixed(1)}万`:`¥${a.toLocaleString()}`;return v<0?`-${s}`:s;}
     function fF(v){if(v===0)return"¥0";return`${v<0?"-":""}¥${Math.abs(Math.round(v)).toLocaleString()}`;}
+    // 媒体ごとのチップ配色（配信マップ用）
+    function plColors(platform){
+      switch(platform){
+        case "Meta":   return {bg:"#eff6ff",fg:"#2563eb",dot:"#3b82f6"};
+        case "TikTok": return {bg:"#fce7f3",fg:"#db2777",dot:"#ec4899"};
+        case "Google": return {bg:"#fef3c7",fg:"#b45309",dot:"#f59e0b"};
+        case "LINE":   return {bg:"#dcfce7",fg:"#16a34a",dot:"#22c55e"};
+        default:        return {bg:"#f3f4f6",fg:"#6b7280",dot:"#9ca3af"};
+      }
+    }
     function dS(a,b){const[am,ad]=a.split("/").map(Number);const[bm,bd]=b.split("/").map(Number);return am!==bm?am-bm:ad-bd;}
     function tS(d){return d?`${d.getHours()}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`:"--:--";}
     function dateInRange(date,start,end){if(!start||!end)return false;const[dm,dd]=date.split("/").map(Number);const[sm,sd]=start.split("/").map(Number);const[em,ed]=end.split("/").map(Number);const d=dm*100+dd,s=sm*100+sd,e=em*100+ed;return d>=s&&d<=e;}
@@ -412,6 +422,9 @@
       const [addName, setAddName] = useState("");
       const [lastUp, setLastUp] = useState(null);
       const [expandedMembers, setExpandedMembers] = useState({});
+      const [mapSearch, setMapSearch] = useState("");      // 配信マップ：検索
+      const [mapPlatform, setMapPlatform] = useState("all"); // 配信マップ：媒体フィルタ
+      const [mapSelChip, setMapSelChip] = useState(null);   // 配信マップ：日別展開中の案件キー
       const [autoRef, setAutoRef] = useState(true);
       const [intMin, setIntMin] = useState(15);
       const [initDone, setInitDone] = useState(false);
@@ -923,7 +936,7 @@
 
               {/* TABS */}
               <div style={{display:"flex",gap:4,marginBottom:20,borderBottom:"2px solid #e5e7eb"}}>
-                {[{k:"ranking",l:"ランキング"},{k:"platform",l:"媒体別"},{k:"detail",l:"メンバー別"}].map(t=>(
+                {[{k:"ranking",l:"ランキング"},{k:"platform",l:"媒体別"},{k:"detail",l:"メンバー別"},{k:"map",l:"配信マップ"}].map(t=>(
                   <button key={t.k} onClick={()=>setView(t.k)} style={{background:"none",border:"none",borderBottom:view===t.k?"2px solid #2563eb":"2px solid transparent",color:view===t.k?"#2563eb":"#6b7280",padding:"12px 20px",fontSize:14,fontWeight:view===t.k?600:400,cursor:"pointer",marginBottom:-2}}>{t.l}</button>
                 ))}
               </div>
@@ -1115,6 +1128,90 @@
                   })}
                 </div>
               )}
+
+              {view==="map"&&(()=>{
+                const q=mapSearch.trim().toLowerCase();
+                const platforms=["all","Meta","TikTok","Google","LINE","Other"];
+                const rows=members.map((m,mi)=>{
+                  const active=m.projects.filter(p=>p.totalProfit!==0||Object.values(p.daily).some(v=>v!==0));
+                  const nameHit=q&&m.name.toLowerCase().includes(q);
+                  let shown=active;
+                  if(mapPlatform!=="all")shown=shown.filter(p=>p.platform===mapPlatform);
+                  if(q&&!nameHit)shown=shown.filter(p=>p.name.toLowerCase().includes(q));
+                  shown=[...shown].sort((a,b)=>b.totalProfit-a.totalProfit);
+                  return {m,shown,monthTotal:active.reduce((s,p)=>s+p.totalProfit,0),color:COLORS[mi%COLORS.length]};
+                }).filter(r=>r.shown.length>0).sort((a,b)=>b.monthTotal-a.monthTotal);
+                const totalProjects=rows.reduce((s,r)=>s+r.shown.length,0);
+                return(
+                <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                  {/* コントロールバー */}
+                  <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                    <div style={{position:"relative",flex:"1 1 240px",minWidth:200}}>
+                      <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:14,color:"#9ca3af"}}>🔍</span>
+                      <input value={mapSearch} onChange={e=>setMapSearch(e.target.value)} placeholder="担当者名・案件名で検索" style={{width:"100%",padding:"10px 12px 10px 34px",border:"1px solid #e5e7eb",borderRadius:10,fontSize:14,outline:"none",boxSizing:"border-box"}}/>
+                    </div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {platforms.map(pf=>{
+                        const on=mapPlatform===pf;
+                        const c=pf==="all"?{dot:"#111827"}:plColors(pf);
+                        return <button key={pf} onClick={()=>setMapPlatform(pf)} style={{border:"none",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",background:on?c.dot:"#f3f4f6",color:on?"#fff":"#6b7280",transition:"all .15s"}}>{pf==="all"?"すべて":pf}</button>;
+                      })}
+                    </div>
+                    <span style={{marginLeft:"auto",fontSize:12,color:"#6b7280",fontWeight:600}}>{rows.length}名 / {totalProjects}案件</span>
+                  </div>
+                  {/* メンバーごとの案件チップ */}
+                  {rows.length===0
+                    ?<Card><p style={{textAlign:"center",color:"#9ca3af",margin:0,padding:"20px 0"}}>該当する案件がありません</p></Card>
+                    :rows.map(({m,shown,monthTotal,color})=>(
+                    <Card key={m.name}>
+                      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+                        <div style={{width:40,height:40,borderRadius:10,background:color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:"white",flexShrink:0,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>{m.name[0]}</div>
+                        <h3 style={{fontSize:17,fontWeight:700,margin:0,color:"#111827"}}>{m.name}</h3>
+                        <span style={{fontSize:12,fontWeight:700,color:"#6b7280",background:"#f3f4f6",padding:"3px 10px",borderRadius:20}}>{shown.length}案件</span>
+                        <span style={{marginLeft:"auto",fontSize:16,fontWeight:700,color:monthTotal>=0?"#059669":"#dc2626"}}>{fF(monthTotal)}</span>
+                      </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                        {shown.map((p,pi)=>{
+                          const c=plColors(p.platform);
+                          const chipKey=`${m.name}::${p.name}::${pi}`;
+                          const open=mapSelChip===chipKey;
+                          return(
+                            <div key={pi} style={{display:"flex",flexDirection:"column"}}>
+                              <button onClick={()=>setMapSelChip(open?null:chipKey)} style={{display:"flex",alignItems:"center",gap:7,background:c.bg,border:open?`1px solid ${c.dot}`:"1px solid transparent",borderRadius:10,padding:"7px 12px",cursor:"pointer",transition:"all .15s"}}>
+                                <span style={{width:8,height:8,borderRadius:"50%",background:c.dot,flexShrink:0}}/>
+                                <span style={{fontSize:13,fontWeight:700,color:"#111827",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</span>
+                                <span style={{fontSize:11,fontWeight:700,color:c.fg}}>{p.platform}</span>
+                                <span style={{fontSize:12,fontWeight:700,color:p.totalProfit>=0?"#059669":"#dc2626"}}>{fY(p.totalProfit)}</span>
+                                <span style={{fontSize:11,color:"#9ca3af"}}>{open?"▲":"▼"}</span>
+                              </button>
+                              {open&&(
+                                <div style={{marginTop:6,background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:8,padding:"10px 12px",minWidth:230}}>
+                                  {(()=>{
+                                    const days=allDates.filter(d=>(p.daily[d]||0)!==0);
+                                    if(!days.length)return <p style={{margin:0,fontSize:12,color:"#9ca3af"}}>日別データなし</p>;
+                                    const max=Math.max(...days.map(d=>Math.abs(p.daily[d])));
+                                    return days.map(d=>{
+                                      const v=p.daily[d]||0;const w=max>0?Math.abs(v)/max*100:0;
+                                      return(
+                                        <div key={d} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0"}}>
+                                          <span style={{fontSize:11,color:"#6b7280",width:38,flexShrink:0}}>{d}</span>
+                                          <div style={{flex:1,height:8,background:"#eef1f4",borderRadius:4,overflow:"hidden"}}><div style={{width:`${w}%`,height:"100%",background:v>=0?"#059669":"#dc2626",borderRadius:4}}/></div>
+                                          <span style={{fontSize:11,fontWeight:700,color:v>=0?"#059669":"#dc2626",width:72,textAlign:"right",flexShrink:0}}>{fF(v)}</span>
+                                        </div>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+                );
+              })()}
               </>}
               {mode==="kpi"&&(
                 <div>
