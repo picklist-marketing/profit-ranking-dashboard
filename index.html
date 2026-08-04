@@ -1229,11 +1229,10 @@
                   {/* チームサマリー */}
                   {(()=>{
                     const TEAMS=[
-                      {name:"チーム加藤", members:["加藤","岸本"]},
+                      {name:"チーム加藤", members:["加藤","本城","岸本","篠田"]},
                       {name:"チーム佐藤", members:["佐藤","山口","川崎"]},
-                      {name:"チーム本城", members:["本城","寺窪"]},
-                      {name:"チーム今井", members:["今井"]},
-                      {name:"チームアミナ",members:["アミナ","平高"]},
+                      {name:"チーム今井", members:["今井","平高","寺窪","アミナ"]},
+                      {name:"チーム藤尾", members:["藤尾"]},
                     ];
                     const teamStats=TEAMS.map(t=>{
                       const ms=kpiData.filter(r=>t.members.includes(r.name));
@@ -1255,7 +1254,7 @@
                         <p style={{fontSize:24,fontWeight:700,color:"#111827",margin:0}}>{fF(kpiData.reduce((s,r)=>s+r.target,0))}</p>
                       </Card>
                     </div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:20}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
                       {teamStats.map(t=>{
                         const c=t.rate===null?"#6b7280":t.rate>=100?"#b45309":t.rate>=70?"#f59e0b":"#dc2626";
                         return(
