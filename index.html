@@ -657,6 +657,17 @@
         }
       },[allDates,selDate,members]);
 
+      // 日付が変わったら自動で当日表示に更新（1分ごとに暦日をチェックし、変わった時だけ再読込）
+      // 再読込で selMonth=当月・selDate=当日（無ければ最新）・最新データ を取り直す
+      useEffect(()=>{
+        let lastDay = new Date().getDate();
+        const id = setInterval(()=>{
+          const d = new Date().getDate();
+          if(d !== lastDay){ lastDay = d; window.location.reload(); }
+        }, 60*1000);
+        return ()=>clearInterval(id);
+      },[]);
+
       // 前日の日付を計算
       const yesterdayDate = useMemo(()=>{
         if(!selDate) return "";
